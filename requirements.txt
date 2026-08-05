@@ -1,0 +1,14 @@
+streamlit>=1.32.0
+pandas>=2.0.0
+numpy>=1.24.0
+APScheduler>=3.10.4
+PyYAML>=6.0
+plotly>=5.20.0
+pytz>=2024.1
+pyarrow>=15.0.0
+requests>=2.31.0
+pyotp>=2.9.0
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.9
+pytest>=8.0.0
+growwapi>=0.1.0
