@@ -98,12 +98,25 @@ bot_400 top-50  ┘                             far fewer than 3×50=150 due to 
 
 ## Multi-broker / multi-account setup
 
-- **2 Angel One accounts** — each account may hold only **1 API key**
+**Finalized 2026-08-08** (superseding the original 2+2 plan below): **1 Groww
+account (primary) + 1 Angel One account (fallback)**. Reasoning — total
+per-cycle load is ~751 quote-fetches (Stage 1, batched 50/call = 16 requests)
++ ~100-150 candle-fetches (Stage 2, 1 symbol/call), ≈170 requests/cycle. A
+single Groww account's ~25 req/s rate clears this in a few seconds, well
+inside the multi-minute checkpoint window — a 2nd Groww account would only
+help if that specific account failed (key revoked, suspended), not for raw
+throughput, and the code's existing chunk-level fallback to Angel One already
+covers a full Groww-side outage. Not worth the extra ₹499+GST/month for that
+narrow edge case. No code change needed — `broker_accounts.py`'s account
+registry already treats the 2nd slot of each broker as optional (silently
+skipped if unconfigured).
+
+- **1 Angel One account** — each account may hold only **1 API key**
   (SEBI compliance restricts non-registered/retail algo API keys to 1 per
   account — confirmed via Angel One's own SmartAPI forum, 2026). Used as the
   Stage 1/2 fallback broker.
-- **2 Groww accounts** — primary broker for both stages. Groww's Trade API is a
-  paid subscription (₹499+GST/month per account, already held by the project
+- **1 Groww account** — primary broker for both stages. Groww's Trade API is a
+  paid subscription (₹499+GST/month, already held by the project
   owner — not a new cost introduced by this project). Rate limit: ~25
   quote/OHLC requests/sec, up to 50 instruments/call for `get_ohlc`/`get_ltp`
   (today's snapshot only) — but `get_historical_candles` (the actual time-series

@@ -171,13 +171,19 @@ See design.md for the full token table and memory.md for the build log
 (including a Figma `createAutoLayout()` default-fill gotcha hit and fixed
 along the way). All 42 tests still pass after this change.
 
-## Phase 5 — Deployment ⬜ NOT STARTED
+## Phase 5 — Deployment 🟡 IN PROGRESS
 
-- GitHub repo: not created/pushed — needs explicit user go-ahead.
+- GitHub repo: ✅ DONE (2026-08-05) — [github.com/humhai-JAAT/unified-trading-engine](https://github.com/humhai-JAAT/unified-trading-engine),
+  created and pushed via `gh repo create ... --push` (GitHub CLI installed +
+  authenticated same session). Initial commit: 36 files, all Phase 3/4 code +
+  the Figma-designed UI.
+- Broker account count: ✅ DECIDED (2026-08-08) — 1 Groww (paid, primary) + 1
+  Angel One (free, fallback), down from the original 2+2 plan. See
+  Architecture.md's "Multi-broker / multi-account setup" for the reasoning.
 - Supabase project: not created — user needs to set one up and hand over the
   Transaction Pooler connection string.
-- Broker credentials: 2 Angel One + 2 Groww (+ optional Dhan) accounts' API
-  keys/secrets need to be configured in Streamlit Cloud Secrets.
+- Broker credentials: 1 Groww + 1 Angel One accounts' API keys/secrets need to
+  be configured in Streamlit Cloud Secrets.
 - Streamlit Cloud deployment: admin + viewer apps.
 - Keep-awake automation, ported from the sibling bots' pattern.
 

@@ -94,7 +94,12 @@ timing/exit combination performs best — before ever considering real capital.
 
 ## Known accepted cost
 
-The project owner already holds 2 Angel One accounts and 2 Groww accounts (Groww's
-API access is a paid ₹499+GST/month subscription per account) — these are used as
-independent rate-limit pools for the parallel-fetch design, not a new expense
-introduced by this project.
+**Finalized 2026-08-08**: 1 Groww account (paid, ₹499+GST/month, already held
+by the project owner — not a new expense) as primary broker, 1 Angel One
+account (free) as fallback. Originally planned as 2+2 for extra parallelism;
+reconsidered once the actual per-cycle request volume (~170 requests) was
+weighed against Groww's ~25 req/s rate limit — one account clears a full
+cycle in a few seconds, so a 2nd Groww account bought no meaningful speed,
+only redundancy against that one account failing, which wasn't judged worth
+the extra subscription cost. See Architecture.md's "Multi-broker /
+multi-account setup" for the full reasoning.

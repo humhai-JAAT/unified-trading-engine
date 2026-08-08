@@ -71,7 +71,7 @@ retroactive decision made without being asked. Plus 3 functional differences:
   actually triggering a real scan cycle with no accounts configured and
   confirming the resulting warning text appeared.
 - **Per-account health visibility** — since this project spans multiple
-  broker accounts (2 Angel One + 2 Groww, optionally Dhan), `render_
+  broker accounts (1 Angel One + 1 Groww, optionally Dhan), `render_
   account_health()` shows which account(s) are configured/healthy vs missing,
   as compact status chips, so a real account-level gap is visible at a glance
   rather than buried in logs.

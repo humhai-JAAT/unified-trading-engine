@@ -9,7 +9,7 @@ specific to this project's multi-broker-account design.
 - **Never place a real trade or wire up any live broker order-execution API.**
   This project is paper-trading only, permanently.
 - **Never commit secrets, API keys, tokens, or passwords to git.** Credentials
-  (Angel One × 2 accounts, Groww × 2 accounts, Dhan if used, `DATABASE_URL`) live
+  (Angel One × 1 account, Groww × 1 account, Dhan if used, `DATABASE_URL`) live
   in Streamlit Cloud Secrets / `.streamlit/secrets.toml` (gitignored) only. If a
   credential is ever typed in chat, treat it as compromised and tell the user to
   rotate it.
@@ -81,7 +81,8 @@ specific to this project's multi-broker-account design.
   4-variant structure per universe-bot — these were explicitly specified via a
   long design discussion and are financially consequential.
 - Any change to which broker account backs which worker, or the account-count
-  assumptions (2 Angel One + 2 Groww) this design was built around.
+  assumptions (1 Angel One + 1 Groww, finalized 2026-08-08) this design was
+  built around.
 - The two open design questions flagged in Architecture.md (exact "Subh 30 min"
   checkpoint schedule, exact trailing-exit mechanism) before implementing the
   variant engine — don't guess a default silently.

@@ -208,5 +208,21 @@ project's own rules.md.
   that requirement may have been lifted since. Confirm against Dhan's own
   current docs before writing `broker_accounts.py`, don't trust either old
   finding blindly.
-- No GitHub repo, no Supabase project, no broker credentials configured yet —
-  all of Phase 5 is still ahead.
+- ~~No GitHub repo~~ — DONE 2026-08-05: [github.com/humhai-JAAT/unified-trading-engine](https://github.com/humhai-JAAT/unified-trading-engine),
+  pushed via `gh repo create --push` (local git identity had to be set first —
+  `git config --local user.name/email`, matching the same values already used
+  in the sibling repos, e.g. bot-v3's).
+- ~~Broker account count open (2+2 plan)~~ — DECIDED 2026-08-08: **1 Groww
+  (paid, primary) + 1 Angel One (free, fallback)**, down from the original
+  2+2. Reasoning: per-cycle load is ~170 requests total (Stage 1's 16 batched
+  quote-calls + Stage 2's ~100-150 single-symbol candle-calls); a single
+  Groww account's ~25 req/s clears that in a few seconds, far inside the
+  multi-minute checkpoint window, so a 2nd Groww account would only guard
+  against that one account failing (key revoke/suspension) — not worth the
+  extra ₹499+GST/month given `stage1_ranking.py`'s existing chunk-level
+  fallback to Angel One already covers a full Groww outage. No code change
+  required — `broker_accounts.py`'s 2nd-account slot per broker was already
+  optional (silently skipped if unconfigured); this decision is just which
+  env vars (`GROWW_1_*`, `ANGELONE_1_*`) actually get populated.
+- No Supabase project, no broker credentials configured yet — rest of Phase 5
+  still ahead.
