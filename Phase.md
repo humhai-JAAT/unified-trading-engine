@@ -180,8 +180,18 @@ along the way). All 42 tests still pass after this change.
 - Broker account count: ✅ DECIDED (2026-08-08) — 1 Groww (paid, primary) + 1
   Angel One (free, fallback), down from the original 2+2 plan. See
   Architecture.md's "Multi-broker / multi-account setup" for the reasoning.
-- Supabase project: not created — user needs to set one up and hand over the
-  Transaction Pooler connection string.
+- Supabase project: ✅ DONE (2026-08-09) — `unified-trading-engine` project
+  created via the Supabase MCP connector (org "PARIHAR GROUP", region
+  `ap-south-1`, free tier, project ref `oosqmkeucbrziplxopyg`). Schema applied
+  via `apply_migration` using the exact SQL generated from `engine/db.py`'s own
+  `POSTGRES_SCHEMA` (not hand-transcribed) — all 14 tables live (12 variant
+  trade tables + `ute_cycle_log` + `ute_checkpoint_log`), 0 rows. RLS enabled
+  on all 14 (no policies needed — the app connects via `DATABASE_URL`
+  directly, which bypasses RLS; this just closes anon/authenticated access via
+  the REST API). Still waiting on the user to fetch the Transaction Pooler
+  connection string from the dashboard (Settings → Database) — DB password
+  isn't retrievable via MCP — before `DATABASE_URL` can be wired into
+  Streamlit Cloud Secrets.
 - Broker credentials: 1 Groww + 1 Angel One accounts' API keys/secrets need to
   be configured in Streamlit Cloud Secrets.
 - Streamlit Cloud deployment: admin + viewer apps.
