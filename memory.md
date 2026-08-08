@@ -238,7 +238,45 @@ project's own rules.md.
   informational "enabled but no policy" lint remains). No policies needed
   because the app talks to Postgres directly via `DATABASE_URL`, which
   bypasses RLS entirely — this only closes the anon/authenticated REST-API
-  path, which the app never uses anyway. DB password/connection string still
-  needs to come from the user (dashboard-only, not retrievable via MCP) before
-  `DATABASE_URL` can be set. No broker credentials configured yet — rest of
-  Phase 5 still ahead.
+  path, which the app never uses anyway. ~~DB password/connection string
+  still needs to come from the user~~ — received and live-verified 2026-08-09,
+  `.streamlit/secrets.toml` (gitignored) now has a working `DATABASE_URL`.
+- **Real broker credentials received and live-tested for the first time,
+  2026-08-09** — both accounts' secrets typed directly in chat by the user;
+  per this project's own rules.md ("if a credential is ever typed in chat,
+  treat it as compromised"), the user was told to rotate the Supabase DB
+  password and Groww API key/secret when convenient. Wired into
+  `.streamlit/secrets.toml` (gitignored, confirmed via `git check-ignore` —
+  never committed). This closed a real gap `broker_accounts.py`'s own
+  docstring had flagged since 2026-08-02 ("not live-verified against real
+  accounts") and found two real bugs neither Phase 3's synthetic tests nor
+  Phase 4's mocked end-to-end test could have caught (both fixed, all 42 tests
+  still pass):
+  - `AngelOneAccount._headers()` never sent `Authorization: Bearer <jwt>` on
+    the post-login secure calls (quote/candle) — only the login call itself
+    worked, everything after failed with "Token missing". Angel One is now
+    **fully verified live**: login, 3/3 quotes, 365 5-min candles.
+  - `GrowwAccount._get_client()` called `GrowwAPI(api_key, api_secret)`, but
+    the actual installed SDK (`growwapi==1.5.0`, added to venv — it was in
+    `requirements.txt` but never `pip install`ed until now) takes a single
+    `token: str`. Real flow: `GrowwAPI.get_access_token(api_key,
+    secret=api_secret)` → returns a ~5.08h-lived JWT → `GrowwAPI(token)`.
+    Fixed, plus added a 4h `GROWW_SESSION_TTL_SECONDS` re-fetch guard (the old
+    code cached the client forever, no refresh — same class of bug the
+    sibling bots' unlocked rate-limiter was, just not caught yet since this
+    was never live-tested before today). **Groww auth itself now works**
+    (`get_user_profile()` succeeds — `active_segments: [CASH, FNO]`) but
+    `get_ohlc` (quotes) and candle calls still return "Access forbidden for
+    this request." — decoding the exchanged token's JWT shows `role:
+    order-basic,non_trading-basic,order_read_only-basic`, no market-data
+    scope. Looks like an account-side provisioning gap (the paid Market/Live
+    Data API subscription may not be enabled on this specific API app/key),
+    not a code bug — **needs the user to check Groww's Developer Console**
+    for this app's enabled scopes before Groww can serve real data. Until
+    then Angel One is the only broker actually usable, which inverts the
+    2026-08-08 broker decision's primary/fallback assumption in practice
+    (Groww was meant to be primary) — worth re-checking once Groww's
+    permission is sorted, but no urgency since `stage1_ranking.py` already
+    falls through to whichever broker is configured and working.
+- Broker credentials fully typed/wired — rest of Phase 5 (Streamlit Cloud
+  deploy, keep-awake automation) still ahead.

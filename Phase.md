@@ -191,9 +191,44 @@ along the way). All 42 tests still pass after this change.
   the REST API). Still waiting on the user to fetch the Transaction Pooler
   connection string from the dashboard (Settings → Database) — DB password
   isn't retrievable via MCP — before `DATABASE_URL` can be wired into
-  Streamlit Cloud Secrets.
-- Broker credentials: 1 Groww + 1 Angel One accounts' API keys/secrets need to
-  be configured in Streamlit Cloud Secrets.
+  Streamlit Cloud Secrets. **DATABASE_URL now received and live-verified**
+  (2026-08-09) — connected via the project's own `engine.db.init_db()` +
+  `get_engine()`, confirmed all 14 `ute_*` tables visible through the pooled
+  connection, not just via the MCP connector.
+- Broker credentials: 🟡 IN PROGRESS (2026-08-09) — both accounts' credentials
+  received and locally wired into `.streamlit/secrets.toml` (gitignored, not
+  committed). Live-verified against real accounts for the first time (closes
+  the "not live-tested" caveat both `broker_accounts.py`'s docstring and this
+  file's Phase 3 notes flagged since 2026-08-03):
+  - **Angel One: ✅ fully working.** Login, quote-fetch (3/3 symbols), and
+    candle-fetch (365 5-min candles) all confirmed live. Found and fixed a
+    real bug in the process — `AngelOneAccount._headers()` never included the
+    `Authorization: Bearer <jwt>` header, so every post-login secure call
+    (quotes, candles) failed with "Token missing" even though login itself
+    succeeded. Fixed by adding the header when `self._jwt_token` is set. All
+    42 tests still pass after the fix.
+  - **Groww: 🟡 partially working — code fixed, account-side permission still
+    blocking.** Found and fixed a real bug: `GrowwAccount._get_client()`
+    called `GrowwAPI(api_key, api_secret)`, but the installed SDK
+    (`growwapi==1.5.0`)'s real constructor is `GrowwAPI(token: str)` — a
+    single session token, not a raw (key, secret) pair. The actual flow is
+    `token = GrowwAPI.get_access_token(api_key, secret=api_secret)` (returns a
+    ~5.08h-lived JWT string, confirmed by decoding both the pre-issued token
+    the user provided and a freshly-exchanged one) then `GrowwAPI(token)`.
+    Fixed, and added a `GROWW_SESSION_TTL_SECONDS` (4h, safely under the
+    observed ~5.08h) re-fetch guard mirroring Angel One's existing TTL
+    pattern — the old code cached the client forever with no refresh.
+    **After the fix, auth itself works** (`get_user_profile()` succeeds,
+    confirms `nse_enabled`/`bse_enabled`, `active_segments: [CASH, FNO]`) but
+    `get_ohlc`/candle calls still return "Access forbidden for this request."
+    The exchanged token's decoded JWT `role` claim is
+    `order-basic,non_trading-basic,order_read_only-basic` — no market-data/
+    live-data scope listed. This looks like the Groww API app/key itself
+    isn't provisioned with the paid Market//Live Data API subscription
+    (separate from basic trading-API access) — **needs the user to check
+    their Groww Developer Console for this app's enabled scopes/subscription
+    status**, not a code issue. `growwapi` was also added to the venv (was in
+    `requirements.txt` but not yet `pip install`ed).
 - Streamlit Cloud deployment: admin + viewer apps.
 - Keep-awake automation, ported from the sibling bots' pattern.
 

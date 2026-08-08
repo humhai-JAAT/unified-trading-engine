@@ -45,6 +45,7 @@ GROWW_CANDLE_RATE_SECONDS = 0.05      # same endpoint family per Groww's docs
 ANGELONE_QUOTE_BATCH_SIZE = 50
 GROWW_QUOTE_BATCH_SIZE = 50
 ANGELONE_SESSION_TTL_SECONDS = 2 * 3600  # JWT valid 2.5h, re-login before that
+GROWW_SESSION_TTL_SECONDS = 4 * 3600     # access token valid ~5.08h observed, re-fetch before that
 
 
 @dataclass
@@ -123,7 +124,7 @@ class AngelOneAccount(BrokerAccount):
         return all([self._client_code, self._password, self._totp_secret, self._api_key])
 
     def _headers(self) -> dict:
-        return {
+        headers = {
             "Content-Type": "application/json",
             "Accept": "application/json",
             "X-ClientLocalIP": "127.0.0.1",
@@ -133,6 +134,9 @@ class AngelOneAccount(BrokerAccount):
             "X-UserType": "USER",
             "X-SourceID": "WEB",
         }
+        if self._jwt_token:
+            headers["Authorization"] = f"Bearer {self._jwt_token}"
+        return headers
 
     def _login(self) -> bool:
         try:
@@ -291,6 +295,7 @@ class GrowwAccount(BrokerAccount):
         self._api_key = api_key
         self._api_secret = api_secret
         self._client = None
+        self._client_created_at = 0.0
         super().__init__()
 
     def _quote_rate_seconds(self) -> float:
@@ -303,13 +308,18 @@ class GrowwAccount(BrokerAccount):
         return bool(self._api_key and self._api_secret)
 
     def _get_client(self):
-        if self._client is not None:
+        if self._client is not None and time.time() - self._client_created_at < GROWW_SESSION_TTL_SECONDS:
             return self._client
         if not self.is_configured():
             return None
         try:
             from growwapi import GrowwAPI  # lazy import — only needed if configured
-            self._client = GrowwAPI(self._api_key, self._api_secret)
+            # GrowwAPI takes a single session token, not (api_key, api_secret) directly —
+            # exchange the approval-based api_key/secret for a token first (live-verified
+            # 2026-08-09; the SDK's real constructor signature is `GrowwAPI(token)`).
+            token = GrowwAPI.get_access_token(self._api_key, secret=self._api_secret)
+            self._client = GrowwAPI(token)
+            self._client_created_at = time.time()
         except Exception as e:
             logger.warning(f"[{self.account_id}] Groww client init failed: {e}")
             return None
