@@ -278,5 +278,32 @@ project's own rules.md.
     (Groww was meant to be primary) — worth re-checking once Groww's
     permission is sorted, but no urgency since `stage1_ranking.py` already
     falls through to whichever broker is configured and working.
-- Broker credentials fully typed/wired — rest of Phase 5 (Streamlit Cloud
-  deploy, keep-awake automation) still ahead.
+- **Groww fully closed out same day (2026-08-09), later in the session.**
+  User asked whether to buy the Market/Live Data subscription flagged above;
+  recommended AGAINST it initially — live-tested that Angel One alone clears
+  a full Stage1+Stage2 cycle in ~26s, comfortably inside the multi-minute
+  checkpoint window, so the subscription wasn't needed just to make the bot
+  functional, only for speed margin/redundancy that wasn't needed. User
+  bought it anyway (their call, real recurring cost). After purchase, quotes
+  started working immediately; candles needed 3 MORE bugs fixed (found via
+  the same live-test-against-real-account method, none catchable by mocked
+  tests): `candle_interval` needed a string (`"5minute"`) not a bare int;
+  `groww_symbol` needed hyphen format (`"NSE-RELIANCE"`) — different from
+  `get_ohlc`'s underscore format (`"NSE_RELIANCE"`) despite being the same
+  SDK; and the response is actually 7 fields/row (undocumented trailing
+  field, always `None` observed) with an ISO-string Datetime already in IST,
+  not the 6-column unix-epoch shape originally assumed. All fixed, Groww now
+  **fully live-verified**: 3/3 quotes, 395 candles — matches Angel One's
+  status, so the 2026-08-08 primary/fallback design is no longer inverted.
+  Also surfaced (independently, by the user) that Groww's exchanged token
+  expires at a **fixed 06:00:00 IST daily cutoff** — matches what
+  `_jwt_exp_timestamp()` was built to handle — and that the current
+  secret-based auth flow requires **manual daily re-approval in the Groww
+  app**, a real operational gap for a bot meant to run unattended. Recommended
+  switching to Groww's TOTP-based key (same `pyotp`-driven pattern Angel One
+  already uses, fully automatable) — **not yet done**, user hasn't generated
+  a TOTP-based key yet, so daily manual approval is still a live requirement
+  until they do. Worth revisiting before this bot is trusted to run
+  unattended for real.
+- Broker credentials fully typed/wired, both brokers live-verified — rest of
+  Phase 5 (Streamlit Cloud deploy, keep-awake automation) still ahead.

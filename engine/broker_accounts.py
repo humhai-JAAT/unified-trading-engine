@@ -22,6 +22,8 @@ before trusting this in production; log and fail closed (return None) on any
 parse surprise rather than crashing, exactly like the sibling clients do.
 """
 
+import base64
+import json
 import os
 import time
 from dataclasses import dataclass, field
@@ -38,6 +40,28 @@ from engine.rate_limiter import AccountRateLimiter
 logger = get_logger(__name__)
 IST = pytz.timezone("Asia/Kolkata")
 
+
+def _jwt_exp_timestamp(token: str) -> float | None:
+    """Reads the `exp` claim straight out of a JWT's payload — no signature
+    verification (we don't have the signing key, and don't need to; we only
+    need to know when OUR OWN just-issued token expires, not authenticate
+    someone else's). Returns None on any parse failure so callers can fail
+    closed (treat as "needs refresh") instead of crashing.
+
+    Groww's access tokens do NOT expire on a rolling N-hours-from-issuance
+    timer — live-tested 2026-08-09, a token minted at 00:55 IST and one that
+    would be minted at any other time of day both expire at a FIXED daily
+    cutoff (06:00:00 IST). Guessing a fixed TTL (e.g. "4 hours") is wrong —
+    decoding the real `exp` is the only reliable way to know when to refresh."""
+    try:
+        payload_b64 = token.split(".")[1]
+        payload_b64 += "=" * (-len(payload_b64) % 4)  # restore stripped padding
+        payload = json.loads(base64.urlsafe_b64decode(payload_b64))
+        return float(payload["exp"])
+    except Exception as e:
+        logger.warning(f"Could not decode JWT exp claim: {e}")
+        return None
+
 ANGELONE_QUOTE_RATE_SECONDS = 1.1     # Angel One quote API: 1 req/sec + buffer
 ANGELONE_CANDLE_RATE_SECONDS = 0.4    # Angel One candle API: 3 req/sec + buffer
 GROWW_QUOTE_RATE_SECONDS = 0.05       # Groww quote/OHLC: ~25 req/sec + buffer
@@ -45,7 +69,7 @@ GROWW_CANDLE_RATE_SECONDS = 0.05      # same endpoint family per Groww's docs
 ANGELONE_QUOTE_BATCH_SIZE = 50
 GROWW_QUOTE_BATCH_SIZE = 50
 ANGELONE_SESSION_TTL_SECONDS = 2 * 3600  # JWT valid 2.5h, re-login before that
-GROWW_SESSION_TTL_SECONDS = 4 * 3600     # access token valid ~5.08h observed, re-fetch before that
+GROWW_TOKEN_REFRESH_BUFFER_SECONDS = 5 * 60  # refresh this long before the token's real exp claim
 
 
 @dataclass
@@ -285,9 +309,14 @@ class GrowwAccount(BrokerAccount):
     batched up to 50 symbols/call; `get_historical_candles` for Stage 2, 1
     symbol/call — see Architecture.md's Stage 2 note on why this can't batch).
 
-    NOT live-verified (see module docstring) — the growwapi import is done
-    lazily so this project doesn't hard-fail at import time for accounts that
-    aren't configured/installed yet."""
+    Auth flow live-verified 2026-08-09 (get_access_token -> GrowwAPI(token)
+    works, get_user_profile() succeeds) but get_ohlc/candle calls still return
+    "Access forbidden" — the account's API app appears to lack the paid
+    Market/Live Data API scope; see memory.md's 2026-08-09 entry. Not a
+    reason to distrust the auth/plumbing itself, just this account's current
+    permissions. The growwapi import is done lazily so this project doesn't
+    hard-fail at import time for accounts that aren't configured/installed
+    yet."""
 
     def __init__(self, account_id: str, api_key: str, api_secret: str):
         self.account_id = account_id
@@ -295,7 +324,7 @@ class GrowwAccount(BrokerAccount):
         self._api_key = api_key
         self._api_secret = api_secret
         self._client = None
-        self._client_created_at = 0.0
+        self._client_expires_at = 0.0  # real `exp` claim from the token, not a guessed TTL
         super().__init__()
 
     def _quote_rate_seconds(self) -> float:
@@ -308,7 +337,7 @@ class GrowwAccount(BrokerAccount):
         return bool(self._api_key and self._api_secret)
 
     def _get_client(self):
-        if self._client is not None and time.time() - self._client_created_at < GROWW_SESSION_TTL_SECONDS:
+        if self._client is not None and time.time() < self._client_expires_at - GROWW_TOKEN_REFRESH_BUFFER_SECONDS:
             return self._client
         if not self.is_configured():
             return None
@@ -319,7 +348,13 @@ class GrowwAccount(BrokerAccount):
             # 2026-08-09; the SDK's real constructor signature is `GrowwAPI(token)`).
             token = GrowwAPI.get_access_token(self._api_key, secret=self._api_secret)
             self._client = GrowwAPI(token)
-            self._client_created_at = time.time()
+            # Groww's token expiry is a FIXED daily wall-clock cutoff (06:00:00 IST),
+            # not N-hours-from-issuance — decode the token's own `exp` rather than
+            # guessing a TTL (live-verified 2026-08-09, see _jwt_exp_timestamp's
+            # docstring). Falls back to a conservative 1-hour assumption if the
+            # token can't be decoded, so a parse surprise degrades, not crashes.
+            exp = _jwt_exp_timestamp(token)
+            self._client_expires_at = exp if exp is not None else time.time() + 3600
         except Exception as e:
             logger.warning(f"[{self.account_id}] Groww client init failed: {e}")
             return None
@@ -361,16 +396,23 @@ class GrowwAccount(BrokerAccount):
             return None
         now = pd.Timestamp.now(tz=IST)
         from_dt = now - pd.Timedelta(days=period_days)
-        interval_minutes = {"1m": 1, "5m": 5, "15m": 15, "1h": 60, "1d": 1440}.get(interval)
-        if interval_minutes is None:
+        # SDK wants a string like "5minute"/"1hour"/"1day" (see GrowwAPI.CANDLE_INTERVAL_*),
+        # not a bare integer — live-verified 2026-08-09, the old int-minutes value produced
+        # "Not able to recognize candle_interval, having value 5".
+        groww_interval = {"1m": "1minute", "5m": "5minute", "15m": "15minute",
+                           "1h": "1hour", "1d": "1day"}.get(interval)
+        if groww_interval is None:
             return None
 
         def _do_request():
+            # groww_symbol wants "Exchange-TradingSymbol" (hyphen) — a DIFFERENT format
+            # than get_ohlc's exchange_trading_symbols ("NSE_SYMBOL", underscore) above;
+            # live-verified 2026-08-09, mixing them up raises a format-validation error.
             return client.get_historical_candles(
-                exchange="NSE", segment="CASH", groww_symbol=f"NSE_{symbol}",
+                exchange="NSE", segment="CASH", groww_symbol=f"NSE-{symbol}",
                 start_time=from_dt.strftime("%Y-%m-%d %H:%M:%S"),
                 end_time=now.strftime("%Y-%m-%d %H:%M:%S"),
-                candle_interval=interval_minutes,
+                candle_interval=groww_interval,
             )
 
         try:
@@ -378,10 +420,15 @@ class GrowwAccount(BrokerAccount):
             candles = (payload or {}).get("candles")
             if not candles:
                 return None
-            df = pd.DataFrame(candles, columns=["Datetime", "Open", "High", "Low", "Close", "Volume"])
-            df["Datetime"] = pd.to_datetime(df["Datetime"], unit="s")
+            # Live-verified 2026-08-09: each row is actually 7 fields (an extra
+            # trailing field, always None in testing — not documented, dropped
+            # here) and Datetime is an ISO string already in IST wall-clock time,
+            # not a unix-seconds epoch the old code assumed.
+            df = pd.DataFrame(candles, columns=["Datetime", "Open", "High", "Low", "Close", "Volume", "_unused"])
+            df = df.drop(columns=["_unused"])
+            df["Datetime"] = pd.to_datetime(df["Datetime"])
             df = df.set_index("Datetime")
-            df.index = df.index.tz_localize("UTC").tz_convert(IST)
+            df.index = df.index.tz_localize(IST) if df.index.tz is None else df.index.tz_convert(IST)
             return df
         except Exception as e:
             logger.warning(f"[{self.account_id}] Groww candle fetch failed for {symbol}: {e}")

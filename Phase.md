@@ -207,28 +207,41 @@ along the way). All 42 tests still pass after this change.
     (quotes, candles) failed with "Token missing" even though login itself
     succeeded. Fixed by adding the header when `self._jwt_token` is set. All
     42 tests still pass after the fix.
-  - **Groww: 🟡 partially working — code fixed, account-side permission still
-    blocking.** Found and fixed a real bug: `GrowwAccount._get_client()`
-    called `GrowwAPI(api_key, api_secret)`, but the installed SDK
-    (`growwapi==1.5.0`)'s real constructor is `GrowwAPI(token: str)` — a
-    single session token, not a raw (key, secret) pair. The actual flow is
-    `token = GrowwAPI.get_access_token(api_key, secret=api_secret)` (returns a
-    ~5.08h-lived JWT string, confirmed by decoding both the pre-issued token
-    the user provided and a freshly-exchanged one) then `GrowwAPI(token)`.
-    Fixed, and added a `GROWW_SESSION_TTL_SECONDS` (4h, safely under the
-    observed ~5.08h) re-fetch guard mirroring Angel One's existing TTL
-    pattern — the old code cached the client forever with no refresh.
-    **After the fix, auth itself works** (`get_user_profile()` succeeds,
-    confirms `nse_enabled`/`bse_enabled`, `active_segments: [CASH, FNO]`) but
-    `get_ohlc`/candle calls still return "Access forbidden for this request."
-    The exchanged token's decoded JWT `role` claim is
-    `order-basic,non_trading-basic,order_read_only-basic` — no market-data/
-    live-data scope listed. This looks like the Groww API app/key itself
-    isn't provisioned with the paid Market//Live Data API subscription
-    (separate from basic trading-API access) — **needs the user to check
-    their Groww Developer Console for this app's enabled scopes/subscription
-    status**, not a code issue. `growwapi` was also added to the venv (was in
-    `requirements.txt` but not yet `pip install`ed).
+  - **Groww: ✅ fully working (2026-08-09, after several rounds of live
+    bug-fixing).** `growwapi` added to venv (was in `requirements.txt`,
+    never installed). Bugs found and fixed, in the order hit:
+    1. `_get_client()` called `GrowwAPI(api_key, api_secret)`; the real SDK
+       constructor is `GrowwAPI(token: str)` — a single session token.
+       Real flow: `GrowwAPI.get_access_token(api_key, secret=api_secret)` →
+       `GrowwAPI(token)`.
+    2. That token's expiry is **not** an N-hours-from-issuance TTL — decoding
+       its `exp` claim showed a token minted at 00:55 IST and the daily
+       cutoff both land on a **fixed 06:00:00 IST wall-clock expiry**,
+       confirmed by the user independently ("Groww API deactivates every day
+       at 6am"). Replaced the initial (wrong) 4h-TTL guess with
+       `_jwt_exp_timestamp()`, which decodes the token's own `exp` claim —
+       robust regardless of what time of day it was issued.
+    3. Even after auth worked, `get_ohlc`/candle calls returned "Access
+       forbidden" — the account had no Market/Live Data API subscription.
+       **User purchased it** (₹499+GST/month, was already the accepted-cost
+       assumption in PRD.md) — quotes started working immediately after.
+    4. Candles still failed post-subscription, 3 more bugs: `candle_interval`
+       needs a string like `"5minute"` (SDK's `CANDLE_INTERVAL_MIN_5`), not a
+       bare int; `groww_symbol` needs `"NSE-RELIANCE"` (hyphen) — a
+       **different** format than `get_ohlc`'s `"NSE_RELIANCE"` (underscore);
+       and the response has **7** fields per candle row (an undocumented
+       trailing field, always `None` in testing) with an ISO-string
+       Datetime already in IST, not the 6-column unix-epoch shape the old
+       code assumed. All fixed and live-verified: 3/3 quotes, 395 5-min
+       candles.
+    Separately, the user flagged that Groww's **secret-based** auth flow
+    requires manually re-approving the app in the Groww console every single
+    day (by design, security measure) — recommended switching to Groww's
+    **TOTP-based** key option instead (`get_access_token(api_key,
+    totp=...)`, same automatable pattern Angel One already uses via
+    `pyotp`), which would remove the daily manual step entirely. **Not yet
+    done** — still on secret-based auth, so daily manual re-approval is
+    still required until the user regenerates a TOTP-based key.
 - Streamlit Cloud deployment: admin + viewer apps.
 - Keep-awake automation, ported from the sibling bots' pattern.
 
