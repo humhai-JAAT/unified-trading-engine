@@ -365,7 +365,34 @@ this — both files are Streamlit UI scripts, not covered by the existing
 pytest suite, matching how the rest of app.py/viewer_app.py's UI code
 already wasn't unit-tested).
 
-Keep-awake automation still open — see Phase 5's original list.
+## Keep-awake automation ✅ DONE (2026-08-10)
+
+Ported directly from the sibling bots' proven pattern (`bot-v3`/
+`intraday-trading-bot`/`intraday-trading-bot-v2`/`swing-trading-bot` all have
+an identical copy) — `.github/workflows/keep-awake.yml` pings the ADMIN app
+3x/day (08:50/16:50/00:50 IST, ~8h spacing to stay under Streamlit Cloud's
+12h sleep threshold) via `scripts/wake_streamlit.py`, a Playwright-driven
+headless-browser script — plain HTTP GET doesn't work (verified in the
+sibling repos: hits an infinite redirect loop), Streamlit only serves real
+content over a JS-driven WebSocket and a sleeping app's wake screen needs a
+real click. Only the admin app is pinged, not the viewer — the viewer is
+read-only display, sleeping doesn't affect trading, just costs a visitor a
+cold-start delay if they open it while asleep. `APP_URL` filled in directly
+with the real deployed URL (unlike bot-v3/swing-trading-bot's copies, which
+still have unfilled `REPLACE-WITH-...` placeholders — this project's actually
+live).
+
+**Live-verified locally** (installed `playwright` + chromium in the venv just
+for this test, not added to `requirements.txt` — it's a CI-only dependency,
+would bloat the Cloud deploy for no reason): ran
+`scripts/wake_streamlit.py` against the real deployed admin URL, correctly
+detected it as already awake and exited 0. Confirms the detection logic
+works; the actual "wake a sleeping app" branch will get its first real
+exercise on the next scheduled GitHub Actions run (or `workflow_dispatch`).
+
+**This closes out Phase 5 entirely** — GitHub repo, broker setup, Supabase,
+both Streamlit Cloud apps, and keep-awake are all done. Only Phase 6 (live
+verification) remains.
 
 ## Phase 6 — Live verification ⬜ NOT STARTED
 

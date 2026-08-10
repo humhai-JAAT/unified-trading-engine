@@ -1,0 +1,43 @@
+name: Keep Streamlit App Awake
+
+# Streamlit Community Cloud puts apps to sleep after 12h with zero visitor traffic,
+# which kills the background APScheduler (and engine/live_feed.py's websocket thread)
+# along with it. Pinging 3x/day at ~8h spacing keeps every gap under the 12h threshold,
+# with the 08:50 IST run deliberately placed right before market open (09:15 IST) so
+# the one that matters most is anchored, not left to arbitrary rotation.
+#
+# Uses a real headless browser (Playwright), not curl/wget — verified directly (in the
+# sibling bots this pattern was ported from) that a plain HTTP GET against these apps
+# hits an infinite redirect loop and never resolves. Streamlit only serves real content
+# over a JS-driven WebSocket connection, and an already-sleeping app's wake-up screen
+# is a button that JS has to click.
+#
+# Only pings the ADMIN app (app.py) — that's the one running the scheduler/live-feed
+# threads that actually matter for the bot to function. The viewer app (viewer_app.py)
+# is read-only display only; it going to sleep doesn't affect trading, just costs a
+# visitor a one-time cold-start delay if they open it while asleep.
+on:
+  schedule:
+    # 03:20 UTC = 08:50 IST (before market open) | 11:20 UTC = 16:50 IST (after close) | 19:20 UTC = 00:50 IST (overnight)
+    - cron: '20 3,11,19 * * *'
+  workflow_dispatch:
+
+jobs:
+  wake:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Playwright
+        run: |
+          pip install playwright
+          playwright install --with-deps chromium
+
+      - name: Wake/ping the Streamlit app
+        run: python scripts/wake_streamlit.py
+        env:
+          APP_URL: https://unified-trading-engine.streamlit.app/

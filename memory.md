@@ -395,3 +395,21 @@ project's own rules.md.
   scan doesn't have this gap, catches it retroactively). Not a bug fix, a
   clarity fix — don't let a future reader assume stronger guarantees than
   what's actually implemented.
+- **Phase 5 fully closed out, 2026-08-10.** Both Streamlit Cloud apps deployed
+  and live: [unified-trading-engine.streamlit.app](https://unified-trading-engine.streamlit.app)
+  (admin) and the viewer app. User verified admin live (scheduler running,
+  Angel One #1 + Groww #1 both healthy, correctly "Asleep" outside market
+  wake hours). Caught and fixed a real gap while checking the viewer app: it
+  let any visitor pick any of the 12 variants — `config.py`'s `public_variant`
+  DEFAULTS key existed since Phase 3 specifically to prevent this but was
+  never wired up. Fixed: admin app gained a "🌐 Public Viewer" control,
+  viewer app's selector removed entirely in favor of just rendering whatever
+  the admin picked. Keep-awake automation ported directly from the sibling
+  bots' proven `.github/workflows/keep-awake.yml` +
+  `scripts/wake_streamlit.py` pattern (Playwright-based — plain HTTP GET
+  doesn't work against Streamlit Cloud, confirmed in the sibling repos) —
+  this project's `APP_URL` was filled in with the real live URL immediately,
+  unlike bot-v3/swing-trading-bot's copies which still carry unfilled
+  placeholders. Live-tested the wake script locally against the real
+  deployed app before committing. **Only Phase 6 (live market-hours
+  verification) remains on this project.**
