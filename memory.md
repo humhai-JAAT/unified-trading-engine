@@ -307,3 +307,33 @@ project's own rules.md.
   unattended for real.
 - Broker credentials fully typed/wired, both brokers live-verified — rest of
   Phase 5 (Streamlit Cloud deploy, keep-awake automation) still ahead.
+- **2026-08-10 — websocket redesign discussion, then a scoped feature actually
+  shipped (Phase 5.5).** User initially asked to "redesign everything" onto
+  Groww's websocket. Researched `GrowwFeed` first rather than diving into
+  code: it's NATS-based (not a plain websocket) and only streams live LTP,
+  never historical OHLCV — so Stage 2 (needs candle history for EMA/ATR)
+  fundamentally can't move to it, ruling out a literal full redesign.
+  Live-tested subscription capacity anyway (user asked specifically): the
+  full 751-stock universe subscribed with **zero errors, <1s** — no batch
+  limit — but per-symbol data only arrives once that symbol actually trades,
+  so coverage builds up over time rather than being instant (66% at 10s, 92%
+  at 60s, even large-caps like BAJAJ-AUTO/APOLLOHOSP took >10s for their
+  first trade in the sampled window). This ruled out replacing Stage 1's REST
+  snapshot too, at least without a "seed via REST, top up via websocket"
+  design that wasn't built.
+  What DID get scoped and shipped: open-position monitoring (2-min REST →
+  tick-driven websocket, ~6s reaction live-verified) — see Phase.md's Phase
+  5.5 and Architecture.md's "Live position monitoring" section for the full
+  build (`engine/live_feed.py`, `variant_engine.locked_decide_and_exit()`,
+  `db.acquire_trade_lock()` finally wired in after existing unused since
+  Phase 3). 49/49 tests pass, pushed to GitHub same session (user explicitly
+  asked for the push, not just a local commit — deviates from this project's
+  usual "never push without being told" default, correctly, since it WAS
+  told this time).
+  **Pattern worth remembering**: when the user proposes a broad redesign,
+  research the actual capability/limits of the underlying API FIRST (here:
+  what does the websocket actually give, and at what scale) before scoping
+  or building anything — it reshaped "redesign everything" into a much
+  smaller, correctly-targeted change, and avoided building something
+  (full Stage 1/2 websocket migration) that the API couldn't actually support
+  well.

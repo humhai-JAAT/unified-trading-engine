@@ -309,14 +309,12 @@ class GrowwAccount(BrokerAccount):
     batched up to 50 symbols/call; `get_historical_candles` for Stage 2, 1
     symbol/call — see Architecture.md's Stage 2 note on why this can't batch).
 
-    Auth flow live-verified 2026-08-09 (get_access_token -> GrowwAPI(token)
-    works, get_user_profile() succeeds) but get_ohlc/candle calls still return
-    "Access forbidden" — the account's API app appears to lack the paid
-    Market/Live Data API scope; see memory.md's 2026-08-09 entry. Not a
-    reason to distrust the auth/plumbing itself, just this account's current
-    permissions. The growwapi import is done lazily so this project doesn't
-    hard-fail at import time for accounts that aren't configured/installed
-    yet."""
+    Fully live-verified 2026-08-09 against a real account with the paid
+    Market/Live Data API subscription active — quotes, candles, and the
+    `GrowwFeed` websocket (live LTP) all confirmed working. See memory.md's
+    2026-08-09 entries for the full bug-fixing history. The growwapi import
+    is done lazily so this project doesn't hard-fail at import time for
+    accounts that aren't configured/installed yet."""
 
     def __init__(self, account_id: str, api_key: str, api_secret: str):
         self.account_id = account_id
@@ -325,6 +323,7 @@ class GrowwAccount(BrokerAccount):
         self._api_secret = api_secret
         self._client = None
         self._client_expires_at = 0.0  # real `exp` claim from the token, not a guessed TTL
+        self._instrument_cache_path = PROJECT_ROOT / "data" / f"groww_instrument_master_{account_id}.csv"
         super().__init__()
 
     def _quote_rate_seconds(self) -> float:
@@ -359,6 +358,34 @@ class GrowwAccount(BrokerAccount):
             logger.warning(f"[{self.account_id}] Groww client init failed: {e}")
             return None
         return self._client
+
+    def get_client(self):
+        """Public accessor for the authenticated `GrowwAPI` instance — used by
+        `engine.live_feed` to build a `GrowwFeed` off the SAME session/token
+        this account already manages, instead of duplicating the auth flow."""
+        return self._get_client()
+
+    def _load_symbol_to_token(self, force_refresh: bool = False) -> dict:
+        """`{trading_symbol: exchange_token}` for NSE/CASH equities — needed for
+        `GrowwFeed`'s subscribe calls, which take `exchange_token`, not a symbol
+        name. Same 7-day file-cache pattern as `AngelOneAccount._load_symbol_to_token`
+        (Groww's own full instrument master is ~137k rows — too large to
+        refetch every call)."""
+        if not force_refresh and self._instrument_cache_path.exists():
+            age_days = (time.time() - self._instrument_cache_path.stat().st_mtime) / 86400
+            if age_days < 7:
+                df = pd.read_csv(self._instrument_cache_path)
+                return dict(zip(df["trading_symbol"], df["exchange_token"].astype(str)))
+
+        client = self._get_client()
+        if client is None:
+            return {}
+        full = client.get_all_instruments()
+        eq = full[(full["exchange"] == "NSE") & (full["segment"] == "CASH")]
+        eq = eq[["trading_symbol", "exchange_token"]].dropna().drop_duplicates(subset="trading_symbol")
+        self._instrument_cache_path.parent.mkdir(parents=True, exist_ok=True)
+        eq.to_csv(self._instrument_cache_path, index=False)
+        return dict(zip(eq["trading_symbol"], eq["exchange_token"].astype(str)))
 
     def fetch_quotes_batch(self, symbols: list[str]) -> list[QuoteResult]:
         client = self._get_client()

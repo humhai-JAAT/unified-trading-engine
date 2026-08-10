@@ -245,6 +245,60 @@ along the way). All 42 tests still pass after this change.
 - Streamlit Cloud deployment: admin + viewer apps.
 - Keep-awake automation, ported from the sibling bots' pattern.
 
+## Phase 5.5 — Live position monitoring via websocket ✅ DONE (2026-08-10)
+
+Not in the original phase plan — added after the user asked to switch open-
+position monitoring from the 2-min REST poll to Groww's websocket (`GrowwFeed`)
+for faster stop-loss/target/trailing-exit reaction. See Architecture.md's
+"Live position monitoring" section for the full design and the websocket
+capability research that shaped its scope (subscribing to Groww's live feed
+hits no batch-size limit even at the full 751-stock universe, but per-symbol
+data only arrives once that symbol actually trades — ~66% coverage at 10s,
+~92% at 60s in a live 2026-08-10 test — and historical OHLCV is never
+available over this feed at all, only live LTP).
+
+Built:
+- `GrowwAccount._load_symbol_to_token()`/`get_client()` (`engine/broker_accounts.py`)
+  — 7-day-cached symbol→exchange_token lookup (mirrors `AngelOneAccount`'s
+  existing pattern) and a public accessor for the live-feed thread to reuse
+  the account's own authenticated session instead of duplicating auth.
+- `engine/live_feed.py` (new) — a daemon background thread, started/stopped
+  alongside `engine.scheduler.start_scheduler()`/`stop_scheduler()`. Every
+  ~2s: re-syncs the websocket subscription to whichever symbols currently
+  have an open position (at most 12, never the full universe), reads live
+  LTPs, and runs each through `variant_engine.locked_decide_and_exit()` — the
+  SAME decision function the REST path uses now (see below), via a synthetic
+  single-row OHLC "candle" built from the tick.
+- `variant_engine.manage_open_position()` refactored: extracted
+  `locked_decide_and_exit()` as a shared entry point wrapped in
+  `db.acquire_trade_lock()` (existed in `db.py` since Phase 3, never actually
+  called anywhere until now — a real gap, harmless while only one path could
+  exit a trade, not harmless once two concurrent paths can). Re-checks the
+  trade is still open under the lock before acting, so the REST job and the
+  live-feed thread can never double-exit the same position. No-ops on SQLite.
+- 7 new tests (`tests/test_live_feed.py`): fail-closed no-Groww-account
+  contract, subscription-diffing (add/remove delta only, unknown-symbol
+  skip), tick→synthetic-candle shape, exception-swallowing. Plus 4 existing
+  `test_manage_open_position.py` tests updated to mock `db.get_open_trade`
+  (now required by the new re-check-under-lock behavior). **49/49 tests
+  pass.**
+
+**Live-verified end-to-end 2026-08-10** (market hours): real Groww account,
+isolated local SQLite (production Supabase untouched) — a fake open RELIANCE
+position picked up a live tick, updated `peak_price`, and flipped
+`target_hit` within **~6 seconds**, vs. up to 2 minutes via REST alone.
+`live_feed.start()`/`stop()` lifecycle also verified against the real
+account — `stop()` is best-effort (the underlying `GrowwFeed` connect isn't
+cancellable mid-retry; the thread is a daemon so it can never outlive the
+process regardless).
+
+**Not done**: Stage 1's ranking fetch stays REST (websocket can't give
+history, and the ~66%-at-10s coverage gap makes it unsuitable as a drop-in
+replacement for "every symbol's price right now" — see Architecture.md).
+Groww's secret-based auth still needs daily manual re-approval (see Phase
+5's Groww section) — a TOTP-based key would remove that AND simplify
+`live_feed`'s own reconnect story, but hasn't been done yet.
+
 ## Phase 6 — Live verification ⬜ NOT STARTED
 
 A genuine in-market-hours run confirming: Stage 1's 6-worker parallel fetch

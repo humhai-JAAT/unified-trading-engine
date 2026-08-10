@@ -96,6 +96,69 @@ bot_400 top-50  ┘                             far fewer than 3×50=150 due to 
                           independent strategy-checks, zero redundant fetching
 ```
 
+## Live position monitoring (added 2026-08-10)
+
+**Goal:** react to an open position's stop-loss/target/trailing-exit within
+seconds, not the 2-min REST poll's worst-case lag.
+
+Explored a full websocket redesign first (`engine.live_feed`'s design
+discussion) and hit a hard limit: Groww's `GrowwFeed` websocket (NATS-based,
+not a plain socket — see broker_accounts.py/live_feed.py) only streams live
+LTP ticks, never historical OHLCV. So Stage 1/2 (both need history — Stage 2
+explicitly, Stage 1's ranking could theoretically use live LTP but wasn't
+changed, see "Not done" below) stay REST, unchanged. Live-tested (2026-08-10,
+market hours) that subscribing to the FULL 751-stock universe hits no
+server-side limit (750/750 succeeded, connection <1s) — but coverage is
+tick-driven, not instant: only ~66% of subscribed symbols had a fresh tick
+within 10s, converging toward ~92% by 60s (even large-caps like BAJAJ-AUTO
+took >10s for their first trade in the sampled window) — a snapshot-style
+REST call doesn't have this gap, so websocket isn't a drop-in replacement for
+"give me every symbol's price right now."
+
+**What actually shipped**, scoped to where the gap matters most — open
+positions, not the full universe:
+
+```
+engine.scheduler.start_scheduler()
+        │
+        ├──▶ 2-min REST job (unchanged) ─── manage_open_position() ─┐
+        │                                                            │
+        └──▶ engine.live_feed background thread (NEW, daemon)        ├─▶ locked_decide_and_exit()
+             persistent GrowwFeed connection, polls get_all_feed()   │      (SAME function, both paths)
+             every ~2s, subscribed ONLY to open positions' symbols ──┘      db.acquire_trade_lock()
+             (at most 12, not 751 — no batch-limit concern here)           re-checks trade still open
+```
+
+Both the REST path (`manage_open_position`, per-1-min-candle since entry) and
+the live-feed path (`live_feed._check_tick`, one synthetic single-row
+"candle" per tick: Open=High=Low=Close=ltp) funnel into the SAME
+`variant_engine.locked_decide_and_exit()` — no duplicated decision logic —
+which wraps the actual check+write in `db.acquire_trade_lock()` (existed in
+db.py since Phase 3 but was never actually called anywhere until this; a real
+gap, since two genuinely concurrent exit paths now exist). Re-fetches the
+trade fresh under the lock rather than trusting a possibly-stale snapshot, so
+the REST job and the live-feed thread can never double-exit the same trade.
+No-ops on SQLite (advisory locks are Postgres-only), so local dev is
+unaffected.
+
+**Fail-closed by design**: `live_feed.start()` is a no-op (returns `False`)
+if no Groww account is configured — Angel One has no websocket equivalent in
+this codebase — and the 2-min REST job keeps running regardless either way.
+If the feed thread disconnects or was never started, behavior silently
+degrades back to 2-min-only reaction, never below that.
+
+**Live-verified end-to-end 2026-08-10** (market hours, isolated local SQLite
+so the real Supabase DB wasn't touched): a fake open RELIANCE position with
+entry_price=1.0 correctly picked up a live tick (~₹1327), updated
+`peak_price`, and flipped `target_hit` to `1` within **~6 seconds** of
+opening — vs. up to 2 minutes via REST alone.
+
+**Not done**: Stage 1's ranking fetch is still pure REST — a hybrid
+(websocket LTP for the full universe + REST as the missing-data fallback)
+was discussed but not built, since the ~66%-in-10s coverage gap would need
+careful handling and Stage 1 isn't the latency-sensitive path today (see
+"Not yet decided" in memory.md if this gets revisited).
+
 ## Multi-broker / multi-account setup
 
 **Finalized 2026-08-08** (superseding the original 2+2 plan below): **1 Groww

@@ -129,6 +129,30 @@ def manage_open_position(variant_id: str, variant_cfg: dict, trade: dict, settin
     if df_1m is None or df_1m.empty:
         return {"action": "hold", "reason": "no_price_data", "symbol": symbol}
 
+    return locked_decide_and_exit(variant_id, variant_cfg, trade, settings, now, account, symbol, df_1m)
+
+
+def locked_decide_and_exit(variant_id: str, variant_cfg: dict, trade: dict, settings: dict, now: datetime,
+                            account: BrokerAccount, symbol: str, df_1m: pd.DataFrame) -> dict:
+    """Shared entry point for BOTH manage_open_position (REST, every 2 min) and
+    engine.live_feed (websocket tick-driven, sub-second) — both must go through
+    this so db.acquire_trade_lock() actually prevents the two concurrent paths
+    from double-exiting the same trade. Re-checks the trade is still open under
+    the lock rather than trusting the caller's possibly-stale snapshot. No-ops
+    on SQLite (see db.acquire_trade_lock's docstring), so local dev/tests are
+    unaffected."""
+    with db.acquire_trade_lock():
+        fresh_trade = db.get_open_trade(variant_id)
+        if fresh_trade is None or fresh_trade["id"] != trade["id"]:
+            return {"action": "hold", "reason": "already_closed", "symbol": symbol}
+
+        return _decide_and_exit(variant_id, variant_cfg, fresh_trade, settings, now, account, symbol, df_1m)
+
+
+def _decide_and_exit(variant_id: str, variant_cfg: dict, trade: dict, settings: dict, now: datetime,
+                      account: BrokerAccount, symbol: str, df_1m: pd.DataFrame) -> dict:
+    """The actual stop-loss/target/trailing/square-off decision + DB write —
+    split out of manage_open_position so it always runs under db.acquire_trade_lock()."""
     entry_time = _timestamp_ist(trade["entry_time"])
     quantity = trade["quantity"]
     capital_used = trade["capital_used"]

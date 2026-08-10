@@ -25,7 +25,7 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from common.helpers import get_logger
-from engine import config, db, nse_universe, stage1_ranking, stage2_candles, variant_engine
+from engine import config, db, live_feed, nse_universe, stage1_ranking, stage2_candles, variant_engine
 from engine.broker_accounts import get_configured_accounts
 
 logger = get_logger(__name__)
@@ -216,14 +216,22 @@ def start_scheduler() -> None:
 
     if not scheduler.running:
         scheduler.start()
+
+    # Best-effort — no-ops (returns False) if no Groww account is configured,
+    # in which case the position-management job above remains the only path.
+    # See engine/live_feed.py's module docstring for the full design.
+    live_feed_started = live_feed.start()
+
     logger.info(f"Scheduler started: position management every {position_minutes} min, "
-                f"entry scan at 5-min-boundary+1 offsets")
+                f"entry scan at 5-min-boundary+1 offsets, "
+                f"live-feed tick-driven exits {'ON' if live_feed_started else 'OFF (no Groww account)'}")
 
 
 def stop_scheduler() -> None:
     scheduler = get_scheduler()
     if scheduler.running:
         scheduler.shutdown(wait=False)
+    live_feed.stop()
     logger.info("Scheduler stopped")
 
 

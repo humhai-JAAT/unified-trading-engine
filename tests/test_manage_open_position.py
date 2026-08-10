@@ -101,10 +101,12 @@ def _now(hh=10, mm=0):
     return IST.localize(datetime(2026, 8, 3, hh, mm))
 
 
+@patch("engine.db.get_open_trade")
 @patch("engine.broker.exit_position")
 @patch("engine.broker.update_extremes")
 @patch("engine.variant_engine._position_data_account")
-def test_manage_open_position_exits_on_stop_loss(mock_account, mock_update_extremes, mock_exit):
+def test_manage_open_position_exits_on_stop_loss(mock_account, mock_update_extremes, mock_exit,
+                                                   mock_get_open_trade):
     # entry=100, capital_used=1000, SL=1.5% -> stop_price = 100 - (1000*1.5/100)/10 = 98.5
     idx = pd.date_range("2026-08-03 09:20", periods=5, freq="1min", tz="Asia/Kolkata")
     df_1m = pd.DataFrame({
@@ -117,6 +119,7 @@ def test_manage_open_position_exits_on_stop_loss(mock_account, mock_update_extre
     mock_exit.return_value = {"trade_id": 1, "exit_price": 98.5, "exit_reason": "STOP_LOSS", "exit_charges": 1.0}
 
     trade = _open_trade()
+    mock_get_open_trade.return_value = trade
     result = manage_open_position("bot_751/subh30_trailing_ema",
                                    {"key": "subh30_trailing_ema", "exit_style": "ema"},
                                    trade, _settings(), _now())
@@ -126,11 +129,12 @@ def test_manage_open_position_exits_on_stop_loss(mock_account, mock_update_extre
     mock_exit.assert_called_once()
 
 
+@patch("engine.db.get_open_trade")
 @patch("engine.db.mark_target_hit")
 @patch("engine.broker.update_extremes")
 @patch("engine.variant_engine._position_data_account")
 def test_manage_open_position_flips_to_trailing_on_target_hit_but_no_trail_signal_yet(
-    mock_account, mock_update_extremes, mock_mark_target_hit
+    mock_account, mock_update_extremes, mock_mark_target_hit, mock_get_open_trade
 ):
     # target_price = 100 + (1000*3/100)/10 = 103. High reaches 103.5 -> target hit.
     idx_1m = pd.date_range("2026-08-03 09:20", periods=3, freq="1min", tz="Asia/Kolkata")
@@ -143,6 +147,7 @@ def test_manage_open_position_flips_to_trailing_on_target_hit_but_no_trail_signa
     mock_update_extremes.return_value = (103.2, 100.0)
 
     trade = _open_trade()
+    mock_get_open_trade.return_value = trade
     result = manage_open_position("bot_751/subh30_trailing_ema",
                                    {"key": "subh30_trailing_ema", "exit_style": "ema"},
                                    trade, _settings(), _now())
@@ -152,11 +157,12 @@ def test_manage_open_position_flips_to_trailing_on_target_hit_but_no_trail_signa
     mock_mark_target_hit.assert_called_once_with("bot_751/subh30_trailing_ema", 1)
 
 
+@patch("engine.db.get_open_trade")
 @patch("engine.broker.exit_position")
 @patch("engine.broker.update_extremes")
 @patch("engine.variant_engine._position_data_account")
 def test_manage_open_position_trailing_exit_never_goes_below_target_hard_floor(
-    mock_account, mock_update_extremes, mock_exit
+    mock_account, mock_update_extremes, mock_exit, mock_get_open_trade
 ):
     # Already past target (target_hit=True in the trade record). 1m data shows
     # no new SL/target breach this cycle; 5m data shows a fresh EMA9 trail-exit
@@ -172,6 +178,7 @@ def test_manage_open_position_trailing_exit_never_goes_below_target_hard_floor(
     mock_exit.return_value = {"trade_id": 1, "exit_price": 103.0, "exit_reason": "EMA_TRAIL_EXIT", "exit_charges": 1.0}
 
     trade = _open_trade(target_hit=True, peak=110.0)
+    mock_get_open_trade.return_value = trade
     manage_open_position("bot_751/subh30_trailing_ema", {"key": "subh30_trailing_ema", "exit_style": "ema"},
                           trade, _settings(), _now())
 
@@ -182,10 +189,12 @@ def test_manage_open_position_trailing_exit_never_goes_below_target_hard_floor(
     assert exit_price_used >= 103.0
 
 
+@patch("engine.db.get_open_trade")
 @patch("engine.broker.exit_position")
 @patch("engine.broker.update_extremes")
 @patch("engine.variant_engine._position_data_account")
-def test_manage_open_position_square_off_after_hours(mock_account, mock_update_extremes, mock_exit):
+def test_manage_open_position_square_off_after_hours(mock_account, mock_update_extremes, mock_exit,
+                                                       mock_get_open_trade):
     idx_1m = pd.date_range("2026-08-03 15:10", periods=2, freq="1min", tz="Asia/Kolkata")
     df_1m = pd.DataFrame({
         "Open": [101, 101], "High": [101.2, 101.2], "Low": [100.9, 100.9], "Close": [101, 101],
@@ -195,6 +204,7 @@ def test_manage_open_position_square_off_after_hours(mock_account, mock_update_e
     mock_exit.return_value = {"trade_id": 1, "exit_price": 101.0, "exit_reason": "SQUARE_OFF", "exit_charges": 1.0}
 
     trade = _open_trade()
+    mock_get_open_trade.return_value = trade
     result = manage_open_position("bot_751/subh30_trailing_ema", {"key": "subh30_trailing_ema", "exit_style": "ema"},
                                    trade, _settings(square_off_time="15:15"), _now(15, 20))
 
