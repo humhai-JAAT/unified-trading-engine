@@ -6,6 +6,7 @@ naming convention this project uses instead of the sibling bots' `vN_M` keys.
 
 import os
 import re
+import zlib
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -138,15 +139,25 @@ def get_engine() -> Engine:
     return _engine
 
 
-_TRADE_LOCK_KEY = 941822017  # arbitrary fixed key for Postgres advisory locking
+def _lock_key_for_variant(variant_id: str) -> int:
+    """Deterministic per-variant lock key (CRC32 of the variant_id, always a
+    non-negative 32-bit int — fits Postgres advisory locks' bigint param with
+    room to spare). Per-variant rather than one single global key (as this
+    used to be) — 2026-08-10 code review flagged that a global key made an
+    unrelated variant's REST network call (the trailing-exit candle fetch,
+    which happens WHILE the lock is held) block every other variant's
+    exit-check too, even though only calls for the SAME variant_id can ever
+    actually race each other."""
+    return zlib.crc32(variant_id.encode())
 
 
 @contextmanager
-def acquire_trade_lock():
-    """Serializes the read-check-then-write around opening/closing positions
-    across concurrent callers (background scheduler vs a manual dashboard
-    click, or local dev + deployed Cloud app both on the same DB) — same
-    pattern as the sibling bots, ported unchanged."""
+def acquire_trade_lock(variant_id: str):
+    """Serializes the read-check-then-write around opening/closing ONE
+    variant's position across concurrent callers (2-min REST job vs
+    engine.live_feed's tick-driven thread, or local dev + deployed Cloud app
+    both on the same DB) — same pattern as the sibling bots' single-key
+    version, scoped per-variant since 2026-08-10 (see _lock_key_for_variant)."""
     engine = get_engine()
     if engine.dialect.name != "postgresql":
         yield
@@ -154,7 +165,7 @@ def acquire_trade_lock():
     conn = engine.connect()
     trans = conn.begin()
     try:
-        conn.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": _TRADE_LOCK_KEY})
+        conn.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": _lock_key_for_variant(variant_id)})
         yield
         trans.commit()
     except Exception:

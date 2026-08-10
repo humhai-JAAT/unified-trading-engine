@@ -360,3 +360,26 @@ project's own rules.md.
   What changed is that generating a fresh access token near that cutoff no
   longer needs a human to click "Approve" in the Groww app — the TOTP secret
   lets the code do it alone, indefinitely.
+- **2026-08-10, same session — ran a code review (`/code-review`) over the
+  live-feed + broker-fix diff, found and fixed 2 real issues (0
+  critical/security).** Both were things a single-developer live-testing
+  pass wouldn't naturally surface — worth remembering as a category: race/
+  contention bugs and repeated-I/O-in-a-hot-loop bugs tend to hide from
+  "does it work" testing and need a dedicated pass looking for them.
+  1. `db.acquire_trade_lock()` had ONE global advisory-lock key for all 12
+     variants — any variant's trailing-exit REST call (held inside the lock)
+     blocked every unrelated variant's exit-check too. Fixed: keyed per-
+     variant via `zlib.crc32(variant_id)` (`db._lock_key_for_variant`).
+     Live-verified against real Postgres that two different variants' locks
+     don't block each other. `variant_engine.locked_decide_and_exit()`'s
+     call site updated to `db.acquire_trade_lock(variant_id)`.
+  2. `live_feed._sync_subscriptions()` called Groww's symbol→token lookup on
+     every ~2s poll, which re-reads+parses a ~4k-row CSV from disk every
+     single call (that function's own cache is file-based, not in-memory).
+     Fixed with a 1h in-memory cache (`live_feed._get_symbol_to_token()`).
+  Also: removed a dead `_INSTRUMENT_FIELDS` constant, and added
+  `tests/test_broker_accounts.py` — the review flagged that `GrowwAccount`'s
+  TOTP-vs-secret auth branching had zero test coverage despite being
+  auth-critical (exactly the kind of branch that could silently regress).
+  **55/55 tests pass** (49 + 4 new broker_accounts tests + 2 new caching
+  tests in test_live_feed.py).

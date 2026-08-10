@@ -140,8 +140,10 @@ def locked_decide_and_exit(variant_id: str, variant_cfg: dict, trade: dict, sett
     from double-exiting the same trade. Re-checks the trade is still open under
     the lock rather than trusting the caller's possibly-stale snapshot. No-ops
     on SQLite (see db.acquire_trade_lock's docstring), so local dev/tests are
-    unaffected."""
-    with db.acquire_trade_lock():
+    unaffected. Locked per-variant_id (2026-08-10 code review) — a different
+    variant's trailing-exit REST candle fetch (which happens while THIS lock
+    is held, see _decide_and_exit) no longer blocks unrelated variants."""
+    with db.acquire_trade_lock(variant_id):
         fresh_trade = db.get_open_trade(variant_id)
         if fresh_trade is None or fresh_trade["id"] != trade["id"]:
             return {"action": "hold", "reason": "already_closed", "symbol": symbol}

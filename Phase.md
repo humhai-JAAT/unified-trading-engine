@@ -306,9 +306,28 @@ process regardless).
 **Not done**: Stage 1's ranking fetch stays REST (websocket can't give
 history, and the ~66%-at-10s coverage gap makes it unsuitable as a drop-in
 replacement for "every symbol's price right now" — see Architecture.md).
-Groww's secret-based auth still needs daily manual re-approval (see Phase
-5's Groww section) — a TOTP-based key would remove that AND simplify
-`live_feed`'s own reconnect story, but hasn't been done yet.
+~~Groww's secret-based auth still needs daily manual re-approval~~ — DONE
+2026-08-10, see Phase 5's Groww section: switched to TOTP.
+
+**Code review 2026-08-10, two findings fixed same day** (see memory.md for
+the full review): no critical/security issues, but two real production-hours
+concerns —
+- `db.acquire_trade_lock()` used a single GLOBAL advisory-lock key for all 12
+  variants — meant one variant's trailing-exit REST candle fetch (which
+  happens WHILE the lock is held) blocked every OTHER variant's exit-check
+  too, even though only same-variant calls can ever actually race. Changed to
+  `acquire_trade_lock(variant_id)`, keyed by `zlib.crc32(variant_id)` — live-
+  verified against real Postgres (two different variant_ids' locks don't
+  block each other; same-variant mutual exclusion still holds).
+- `live_feed._sync_subscriptions()` called `account._load_symbol_to_token()`
+  on every ~2s poll — that function re-reads+parses its ~4k-row instrument-
+  master CSV from disk every call (its own cache is file-based only). Added
+  an in-memory cache (`_get_symbol_to_token()`, 1h TTL) inside `live_feed.py`
+  to stop the redundant disk I/O within a thread's lifetime.
+- Also addressed: removed an unused `_INSTRUMENT_FIELDS` constant, added
+  `tests/test_broker_accounts.py` (4 tests) covering the TOTP-vs-secret
+  branch in `GrowwAccount._get_client()` — flagged as untested despite being
+  auth-critical. **55/55 tests pass.**
 
 ## Phase 6 — Live verification ⬜ NOT STARTED
 

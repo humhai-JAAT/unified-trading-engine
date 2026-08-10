@@ -34,6 +34,7 @@ thread disconnects or was never started, behavior silently degrades back to
 """
 
 import threading
+import time
 from datetime import datetime
 
 import pandas as pd
@@ -48,12 +49,20 @@ logger = get_logger(__name__)
 IST = pytz.timezone("Asia/Kolkata")
 
 DEFAULT_POLL_INTERVAL_SECONDS = 2.0
-_INSTRUMENT_FIELDS = ("exchange", "segment", "exchange_token")
+# account._load_symbol_to_token() re-reads+parses its ~4k-row instrument-master
+# CSV from disk on every call (its own cache is file-based, 7-day TTL) — fine
+# for occasional use, too expensive to call on every ~2s poll. Cache the
+# resulting dict here IN MEMORY for the life of this thread, refreshed hourly
+# — well under the account's own 7-day file-cache TTL, just avoids redundant
+# disk I/O within that window (2026-08-10 code review finding).
+SYMBOL_TOKEN_CACHE_TTL_SECONDS = 3600
 
 _thread: threading.Thread | None = None
 _stop_event = threading.Event()
 _feed = None  # growwapi.GrowwFeed instance, set once connected
 _subscribed_tokens: dict[str, str] = {}  # exchange_token -> symbol, currently subscribed
+_symbol_token_cache: dict[str, str] = {}
+_symbol_token_cache_loaded_at = 0.0
 
 
 def _groww_account() -> GrowwAccount | None:
@@ -77,6 +86,16 @@ def _instrument(token: str) -> dict:
     return {"exchange": "NSE", "segment": "CASH", "exchange_token": token}
 
 
+def _get_symbol_to_token(account: GrowwAccount) -> dict[str, str]:
+    """In-memory-cached wrapper around account._load_symbol_to_token() — see
+    SYMBOL_TOKEN_CACHE_TTL_SECONDS' comment for why this exists."""
+    global _symbol_token_cache, _symbol_token_cache_loaded_at
+    if not _symbol_token_cache or time.time() - _symbol_token_cache_loaded_at > SYMBOL_TOKEN_CACHE_TTL_SECONDS:
+        _symbol_token_cache = account._load_symbol_to_token()
+        _symbol_token_cache_loaded_at = time.time()
+    return _symbol_token_cache
+
+
 def _sync_subscriptions(account: GrowwAccount, feed, open_trades: dict[str, dict]) -> None:
     """Diffs the current subscription set against `open_trades`' symbols and
     subscribes/unsubscribes only the delta. Symbols with no known
@@ -85,7 +104,7 @@ def _sync_subscriptions(account: GrowwAccount, feed, open_trades: dict[str, dict
     global _subscribed_tokens
 
     wanted_symbols = {trade["symbol"] for trade in open_trades.values()}
-    symbol_to_token = account._load_symbol_to_token() if wanted_symbols else {}
+    symbol_to_token = _get_symbol_to_token(account) if wanted_symbols else {}
     wanted_tokens: dict[str, str] = {}
     for sym in wanted_symbols:
         token = symbol_to_token.get(sym)

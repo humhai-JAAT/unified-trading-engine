@@ -17,11 +17,13 @@ IST = pytz.timezone("Asia/Kolkata")
 
 
 def teardown_function():
-    """live_feed's subscription/thread state is module-level — reset it after
-    every test so tests don't leak into each other, same reasoning as
+    """live_feed's subscription/thread/cache state is module-level — reset it
+    after every test so tests don't leak into each other, same reasoning as
     test_scheduler.py's teardown_function."""
     live_feed.stop(timeout_seconds=1.0)
     live_feed._subscribed_tokens = {}
+    live_feed._symbol_token_cache = {}
+    live_feed._symbol_token_cache_loaded_at = 0.0
 
 
 @patch("engine.live_feed.get_configured_accounts", return_value={"groww": [], "angelone": []})
@@ -46,6 +48,31 @@ def test_all_open_trades_aggregates_across_all_12_variants():
         "bot_751/subh30_trailing_ema": {"id": 1, "symbol": "RELIANCE"},
         "bot_400/puradin_trailing_atr": {"id": 2, "symbol": "TCS"},
     }
+
+
+def test_get_symbol_to_token_caches_in_memory_across_calls():
+    """2026-08-10 code review finding: account._load_symbol_to_token() re-reads
+    a ~4k-row CSV from disk every call — must not be called on every poll."""
+    account = MagicMock()
+    account._load_symbol_to_token.return_value = {"RELIANCE": "2885"}
+
+    first = live_feed._get_symbol_to_token(account)
+    second = live_feed._get_symbol_to_token(account)
+
+    assert first == {"RELIANCE": "2885"}
+    assert second == {"RELIANCE": "2885"}
+    account._load_symbol_to_token.assert_called_once()  # NOT called again on the 2nd call
+
+
+def test_get_symbol_to_token_refreshes_after_ttl_expires():
+    account = MagicMock()
+    account._load_symbol_to_token.return_value = {"RELIANCE": "2885"}
+
+    live_feed._get_symbol_to_token(account)
+    live_feed._symbol_token_cache_loaded_at -= (live_feed.SYMBOL_TOKEN_CACHE_TTL_SECONDS + 1)
+    live_feed._get_symbol_to_token(account)
+
+    assert account._load_symbol_to_token.call_count == 2
 
 
 def test_sync_subscriptions_only_diffs_the_delta():
