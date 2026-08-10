@@ -342,6 +342,31 @@ concerns —
   — just made explicit so a future reader doesn't assume stronger protection
   than what actually exists. **55/55 tests pass.**
 
+## Streamlit Cloud deployment ✅ DONE (2026-08-10)
+
+Both apps live: [unified-trading-engine.streamlit.app](https://unified-trading-engine.streamlit.app)
+(admin) and [unified-trading-engine-viewer-app.streamlit.app](https://unified-trading-engine-viewer-app.streamlit.app)
+(viewer). `runtime.txt` (`python-3.12`) added to pin the Cloud runtime to
+match local dev. Admin verified live by the user: scheduler running, Angel
+One #1 + Groww #1 both showing healthy (green), #2 slots correctly showing
+unconfigured, bot correctly "Asleep" outside the 09:00–16:00 IST wake window.
+
+**Found and fixed a real design gap while verifying the viewer app**: it let
+any visitor pick any of the 12 variants via the same 2-level selector the
+admin app uses — never the intent (`config.py`'s `public_variant` DEFAULTS
+key existed since Phase 3 specifically for this, but was never wired up).
+Fixed: `app.py` gained a "🌐 Public Viewer" sidebar control (persists via
+`config.save_settings()`) letting the admin pick exactly one variant (or
+none) to expose; `viewer_app.py`'s selector was removed entirely — it now
+just reads `settings["public_variant"]` and renders that one variant, with
+an info message if none is set. Verified working locally (localhost:8512)
+by the user before push. 55/55 tests still pass (no test coverage added for
+this — both files are Streamlit UI scripts, not covered by the existing
+pytest suite, matching how the rest of app.py/viewer_app.py's UI code
+already wasn't unit-tested).
+
+Keep-awake automation still open — see Phase 5's original list.
+
 ## Phase 6 — Live verification ⬜ NOT STARTED
 
 A genuine in-market-hours run confirming: Stage 1's 6-worker parallel fetch

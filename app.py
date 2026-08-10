@@ -109,6 +109,22 @@ variant_cfg = config.VARIANTS_BY_KEY[variant_key]
 st.sidebar.caption("All 12 keep scanning/trading independently regardless of which one you're viewing.")
 
 st.sidebar.divider()
+st.sidebar.markdown("### 🌐 Public Viewer")
+_public_options = [""] + config.all_variant_ids()
+_public_current = settings.get("public_variant", "")
+public_variant = st.sidebar.selectbox(
+    "Variant shown on the Viewer app",
+    options=_public_options,
+    index=_public_options.index(_public_current) if _public_current in _public_options else 0,
+    format_func=lambda v: "— none (viewer shows nothing) —" if v == "" else v.replace("/", " · ").replace("_", " "),
+)
+if public_variant != _public_current:
+    config.save_settings({**settings, "public_variant": public_variant})
+    st.sidebar.success("Viewer app updated.")
+    st.rerun()
+st.sidebar.caption("Controls what the separate read-only Viewer app shows — visitors there can't pick their own.")
+
+st.sidebar.divider()
 with st.sidebar.expander("⚙️ Strategy Settings", expanded=False):
     capital = st.number_input("Capital per Variant (₹)", min_value=1000, step=1000,
                                value=int(settings["starting_capital"]))

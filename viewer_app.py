@@ -1,7 +1,10 @@
 """Unified Trading Engine — READ-ONLY viewer dashboard.
 
-Same metrics/position/equity/trade-log as app.py, and the same 2-level
-universe-bot -> variant sidebar selector, but with NO other controls — no
+Shows exactly ONE variant — whichever the admin app's "🌐 Public Viewer"
+control currently points `settings["public_variant"]` at (see app.py). NO
+variant selector here — visitors can't pick their own, that choice is
+admin-controlled only (2026-08-10, per the user: viewer picking any of the
+12 variants itself was never the intent). No other controls either — no
 Start/Stop, no Settings, no Reset, no Force Exit, no cycle log. Deploy as its
 OWN separate Streamlit Cloud app (same repo, main file path "viewer_app.py"
 instead of "app.py") so this link can be shared without exposing controls.
@@ -26,19 +29,18 @@ dashboard_view.inject_custom_css()
 db.init_db()
 settings = config.load_settings()
 
-st.sidebar.markdown("### 👀 Viewing")
-universe_bot_key = st.sidebar.selectbox(
-    "Universe-bot", options=[b["key"] for b in config.UNIVERSE_BOTS],
-    format_func=lambda k: config.UNIVERSE_BOTS_BY_KEY[k]["label"],
-)
-variant_key = st.sidebar.radio(
-    "Variant", options=[v["key"] for v in config.VARIANTS],
-    format_func=lambda k: k.replace("_", " "),
-)
-variant_cfg = config.VARIANTS_BY_KEY[variant_key]
-
 st.title("🧩 Unified Trading Engine — Viewer")
-st.caption("Live view only — no controls here. Use the sidebar to pick a universe-bot and variant.")
+st.caption("Live view only — no controls here.")
+
+public_variant_id = settings.get("public_variant", "")
+if not public_variant_id or public_variant_id not in config.all_variant_ids():
+    st.info("No variant is currently public. Check back later.")
+    st.stop()
+
+universe_bot_key, variant_key = public_variant_id.split("/", 1)
+variant_cfg = config.VARIANTS_BY_KEY[variant_key]
+st.caption(f"Showing: **{config.UNIVERSE_BOTS_BY_KEY[universe_bot_key]['label']}** · "
+           f"{variant_key.replace('_', ' ')}")
 
 
 @st.fragment(run_every=dashboard_view.get_refresh_interval())
