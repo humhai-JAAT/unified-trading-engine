@@ -31,6 +31,18 @@ data isn't available over this websocket at all, see Architecture.md) or the
 2-min REST job itself (kept running unconditionally as a safety net — if this
 thread disconnects or was never started, behavior silently degrades back to
 2-min-only reaction, never below that).
+
+NOT continuous protection, despite the name — 2026-08-10 code review note:
+each poll only checks the price AT THAT INSTANT (one tick, not every tick
+that arrived since the last poll). A stop-loss/target level that gets
+touched and recovers again within a single poll_interval_seconds window
+(default 2s) can be missed here. The 2-min REST job's manage_open_position()
+doesn't have this gap — it scans every 1-min candle's actual High/Low since
+entry, not just the latest price — so it will still catch it retroactively,
+just up to 2 minutes later. Acceptable given how narrow the window is, but a
+real gap, not a hypothetical one — don't describe this module as guaranteeing
+sub-second SL/target enforcement, only sub-second REACTION to whatever price
+was live at each poll.
 """
 
 import threading
@@ -61,6 +73,13 @@ _thread: threading.Thread | None = None
 _stop_event = threading.Event()
 _feed = None  # growwapi.GrowwFeed instance, set once connected
 _subscribed_tokens: dict[str, str] = {}  # exchange_token -> symbol, currently subscribed
+# Guards _subscribed_tokens — stop() (called from whatever thread calls
+# stop_scheduler(), usually the main/Streamlit thread) and _sync_subscriptions()
+# (the background _run_loop thread) both read-then-write it; without this,
+# a stop() landing mid-_sync_subscriptions could race a stale value back in
+# (2026-08-10 code review — benign under the GIL, self-heals next poll, but
+# worth closing properly rather than relying on that).
+_subscribed_tokens_lock = threading.Lock()
 _symbol_token_cache: dict[str, str] = {}
 _symbol_token_cache_loaded_at = 0.0
 
@@ -113,8 +132,13 @@ def _sync_subscriptions(account: GrowwAccount, feed, open_trades: dict[str, dict
         else:
             logger.warning(f"live_feed: no exchange_token found for {sym!r}, cannot subscribe")
 
-    to_add = {tok: sym for tok, sym in wanted_tokens.items() if tok not in _subscribed_tokens}
-    to_remove = {tok: sym for tok, sym in _subscribed_tokens.items() if tok not in wanted_tokens}
+    # Lock brackets only the dict read/write, never the network calls below —
+    # same "don't hold a lock across I/O" principle as db.acquire_trade_lock's
+    # 2026-08-10 fix (see that commit).
+    with _subscribed_tokens_lock:
+        current = dict(_subscribed_tokens)
+    to_add = {tok: sym for tok, sym in wanted_tokens.items() if tok not in current}
+    to_remove = {tok: sym for tok, sym in current.items() if tok not in wanted_tokens}
 
     if to_remove:
         try:
@@ -130,7 +154,8 @@ def _sync_subscriptions(account: GrowwAccount, feed, open_trades: dict[str, dict
             # Don't claim tokens we're not sure actually subscribed — retry next poll.
             wanted_tokens = {tok: sym for tok, sym in wanted_tokens.items() if tok not in to_add}
 
-    _subscribed_tokens = wanted_tokens
+    with _subscribed_tokens_lock:
+        _subscribed_tokens = wanted_tokens
 
 
 def _check_tick(variant_id: str, variant_cfg: dict, trade: dict, settings: dict, now: datetime,
@@ -240,7 +265,8 @@ def stop(timeout_seconds: float = 5.0) -> None:
             logger.warning("live_feed.stop(): thread still alive after timeout "
                             "(likely blocked in GrowwFeed's connect) — will stop on its own once unblocked")
     _feed = None
-    _subscribed_tokens = {}
+    with _subscribed_tokens_lock:
+        _subscribed_tokens = {}
 
 
 def is_running() -> bool:

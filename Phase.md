@@ -327,7 +327,20 @@ concerns —
 - Also addressed: removed an unused `_INSTRUMENT_FIELDS` constant, added
   `tests/test_broker_accounts.py` (4 tests) covering the TOTP-vs-secret
   branch in `GrowwAccount._get_client()` — flagged as untested despite being
-  auth-critical. **55/55 tests pass.**
+  auth-critical.
+- **Remaining 2 of the review's 6 findings, closed same day**: (1)
+  `_subscribed_tokens` (module-global, read/written by both the main thread's
+  `stop()` and the background thread's `_sync_subscriptions()`) now guarded
+  by a `threading.Lock` — bracketed around the dict read/write only, never
+  the `subscribe_ltp`/`unsubscribe_ltp` network calls, same "don't hold a
+  lock across I/O" principle as the advisory-lock fix above. (2) Documented
+  (module docstring) that this thread checks price AT POLL TIME, not every
+  tick since the last poll — a stop-loss/target touched-and-recovered within
+  one `poll_interval_seconds` window (default 2s) can be missed here,
+  caught retroactively by the 2-min REST job's per-candle scan instead. Not
+  a code fix (there wasn't a bug to fix, just an easy-to-misread guarantee)
+  — just made explicit so a future reader doesn't assume stronger protection
+  than what actually exists. **55/55 tests pass.**
 
 ## Phase 6 — Live verification ⬜ NOT STARTED
 

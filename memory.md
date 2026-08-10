@@ -383,3 +383,15 @@ project's own rules.md.
   auth-critical (exactly the kind of branch that could silently regress).
   **55/55 tests pass** (49 + 4 new broker_accounts tests + 2 new caching
   tests in test_live_feed.py).
+  **User then asked for the review's remaining 2 (lower-severity) findings
+  too** — closed same session: added a `threading.Lock` around
+  `live_feed._subscribed_tokens` (racy between `stop()`'s main-thread write
+  and `_sync_subscriptions()`'s background-thread read/write — benign under
+  the GIL but worth closing properly), bracketing only the dict access, not
+  the websocket subscribe/unsubscribe network calls. And made explicit in
+  `live_feed.py`'s module docstring that it checks price at POLL TIME, not
+  continuously — a touch-and-recover within one ~2s poll window can be
+  missed by this path specifically (the 2-min REST job's per-candle High/Low
+  scan doesn't have this gap, catches it retroactively). Not a bug fix, a
+  clarity fix — don't let a future reader assume stronger guarantees than
+  what's actually implemented.
