@@ -337,3 +337,26 @@ project's own rules.md.
   smaller, correctly-targeted change, and avoided building something
   (full Stage 1/2 websocket migration) that the API couldn't actually support
   well.
+- **2026-08-10, same session — Groww TOTP switch, closing the daily-manual-
+  approval gap flagged back in Phase 5's Groww section (2026-08-09).** User's
+  own research initially suggested Groww had no TOTP option — verified
+  against Groww's official docs AND the installed SDK's actual
+  `get_access_token()` source (a real `totp`-branch API call, not a
+  vestigial parameter) before trusting either claim; TOTP is real,
+  documented, and Groww's own recommended method ("No Expiry", vs. daily
+  approval for secret-based keys). **Another instance of the same pattern
+  as the websocket research above** — verify a factual claim (from the user
+  OR from an assumption of my own) against an authoritative source before
+  acting on it, rather than trusting either blindly.
+  User generated a TOTP-based key via Groww's console (shared in chat — same
+  "treat as compromised, rotate when convenient" note as every other
+  credential this session). `GrowwAccount` (`engine/broker_accounts.py`) now
+  supports both `totp_secret` (preferred, same `pyotp` pattern
+  `AngelOneAccount` uses) and `api_secret` (kept for backward compatibility
+  only). Live-verified: 3/3 quotes, 394 candles, zero manual steps needed.
+  One nuance worth remembering: the TOTP switch does NOT change how often the
+  *access token* itself needs refreshing — that's still the same fixed
+  06:00:00 IST daily cutoff `_jwt_exp_timestamp()` already handled correctly.
+  What changed is that generating a fresh access token near that cutoff no
+  longer needs a human to click "Approve" in the Groww app — the TOTP secret
+  lets the code do it alone, indefinitely.

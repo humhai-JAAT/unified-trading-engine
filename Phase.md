@@ -237,11 +237,22 @@ along the way). All 42 tests still pass after this change.
     Separately, the user flagged that Groww's **secret-based** auth flow
     requires manually re-approving the app in the Groww console every single
     day (by design, security measure) — recommended switching to Groww's
-    **TOTP-based** key option instead (`get_access_token(api_key,
-    totp=...)`, same automatable pattern Angel One already uses via
-    `pyotp`), which would remove the daily manual step entirely. **Not yet
-    done** — still on secret-based auth, so daily manual re-approval is
-    still required until the user regenerates a TOTP-based key.
+    **TOTP-based** key option instead. ~~Not yet done~~ — **DONE 2026-08-10**:
+    the user initially found conflicting info suggesting Groww had no TOTP
+    option; verified against Groww's own official docs
+    (groww.in/trade-api/docs/python-sdk) and the installed SDK's actual
+    `get_access_token()` implementation (a real `totp` code path hitting
+    `https://api.groww.in/v1/token/api/access`, not a vestigial parameter) —
+    TOTP is real and Groww-recommended ("No Expiry" per their docs, vs. daily
+    approval for secret-based keys). User generated a TOTP-based key via
+    Groww's console. `GrowwAccount` now supports both flows (`totp_secret`
+    preferred, `api_secret` kept only for backward compatibility) — same
+    `pyotp.TOTP(secret).now()` pattern `AngelOneAccount` already used.
+    Live-verified: 3/3 quotes, 394 candles, zero manual steps. The exchanged
+    access token itself still expires at the same fixed 06:00:00 IST cutoff
+    (that part was never the problem — already handled by
+    `_jwt_exp_timestamp()`) — it's specifically the TOTP *key* that never
+    expires and needs no human approval, unlike the old secret-based key.
 - Streamlit Cloud deployment: admin + viewer apps.
 - Keep-awake automation, ported from the sibling bots' pattern.
 

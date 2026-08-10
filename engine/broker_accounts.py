@@ -314,13 +314,26 @@ class GrowwAccount(BrokerAccount):
     `GrowwFeed` websocket (live LTP) all confirmed working. See memory.md's
     2026-08-09 entries for the full bug-fixing history. The growwapi import
     is done lazily so this project doesn't hard-fail at import time for
-    accounts that aren't configured/installed yet."""
+    accounts that aren't configured/installed yet.
 
-    def __init__(self, account_id: str, api_key: str, api_secret: str):
+    TWO auth flows supported, mirroring Groww's own two API-key types
+    (confirmed via Groww's official docs, 2026-08-10 — see memory.md):
+    - TOTP-based (`totp_secret` set): `pyotp`-generated fresh code each call,
+      same fully-automated pattern AngelOneAccount already uses. Groww's own
+      docs describe this key type as "No Expiry" — no daily manual step.
+      **Preferred** — used whenever `totp_secret` is provided.
+    - Approval/secret-based (`api_secret` set, `totp_secret` unset): requires
+      a human to manually re-approve the app in the Groww console once per
+      day — kept only for backward compatibility with an already-configured
+      approval-type key."""
+
+    def __init__(self, account_id: str, api_key: str, api_secret: str | None = None,
+                 totp_secret: str | None = None):
         self.account_id = account_id
         self.broker = "groww"
         self._api_key = api_key
         self._api_secret = api_secret
+        self._totp_secret = totp_secret
         self._client = None
         self._client_expires_at = 0.0  # real `exp` claim from the token, not a guessed TTL
         self._instrument_cache_path = PROJECT_ROOT / "data" / f"groww_instrument_master_{account_id}.csv"
@@ -333,7 +346,7 @@ class GrowwAccount(BrokerAccount):
         return GROWW_CANDLE_RATE_SECONDS
 
     def is_configured(self) -> bool:
-        return bool(self._api_key and self._api_secret)
+        return bool(self._api_key and (self._totp_secret or self._api_secret))
 
     def _get_client(self):
         if self._client is not None and time.time() < self._client_expires_at - GROWW_TOKEN_REFRESH_BUFFER_SECONDS:
@@ -343,9 +356,15 @@ class GrowwAccount(BrokerAccount):
         try:
             from growwapi import GrowwAPI  # lazy import — only needed if configured
             # GrowwAPI takes a single session token, not (api_key, api_secret) directly —
-            # exchange the approval-based api_key/secret for a token first (live-verified
-            # 2026-08-09; the SDK's real constructor signature is `GrowwAPI(token)`).
-            token = GrowwAPI.get_access_token(self._api_key, secret=self._api_secret)
+            # exchange the api_key for a token first (live-verified 2026-08-09; the
+            # SDK's real constructor signature is `GrowwAPI(token)`). TOTP preferred
+            # over approval/secret — see class docstring.
+            if self._totp_secret:
+                import pyotp
+                totp_code = pyotp.TOTP(self._totp_secret).now()
+                token = GrowwAPI.get_access_token(self._api_key, totp=totp_code)
+            else:
+                token = GrowwAPI.get_access_token(self._api_key, secret=self._api_secret)
             self._client = GrowwAPI(token)
             # Groww's token expiry is a FIXED daily wall-clock cutoff (06:00:00 IST),
             # not N-hours-from-issuance — decode the token's own `exp` rather than
@@ -491,6 +510,7 @@ def get_configured_accounts() -> dict[str, list[BrokerAccount]]:
             account_id=f"groww_{n}",
             api_key=_env(prefix, "API_KEY"),
             api_secret=_env(prefix, "API_SECRET"),
+            totp_secret=_env(prefix, "TOTP_SECRET"),
         )
         if acct.is_configured():
             groww_accounts.append(acct)

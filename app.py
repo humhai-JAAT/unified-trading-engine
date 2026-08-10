@@ -28,7 +28,7 @@ try:
             if key in st.secrets:
                 os.environ.setdefault(key, st.secrets[key])
     for prefix in ("GROWW_1", "GROWW_2"):
-        for suffix in ("API_KEY", "API_SECRET"):
+        for suffix in ("API_KEY", "API_SECRET", "TOTP_SECRET"):
             key = f"{prefix}_{suffix}"
             if key in st.secrets:
                 os.environ.setdefault(key, st.secrets[key])
