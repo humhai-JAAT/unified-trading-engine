@@ -394,10 +394,57 @@ exercise on the next scheduled GitHub Actions run (or `workflow_dispatch`).
 both Streamlit Cloud apps, and keep-awake are all done. Only Phase 6 (live
 verification) remains.
 
-## Phase 6 — Live verification ⬜ NOT STARTED
+## Phase 6 — Live verification 🟡 IN PROGRESS (started 2026-08-11)
 
-A genuine in-market-hours run confirming: Stage 1's 6-worker parallel fetch
-completes within budget, chunk-level fallback actually triggers and recovers
-correctly on a simulated failure, Stage 2's dedup measurably reduces candle
-fetches vs the sibling bots' baseline, and all 12 variants scan/trade/exit
-correctly off the shared data.
+**First real in-market-hours session, 2026-08-11.** User noticed the admin
+dashboard showing "No entry-scan cycle has run yet" ~37 minutes into market
+hours and asked for it to be investigated. Found and fixed 2 real production
+bugs, both confirmed against the live Supabase Postgres DB (real broker
+accounts, real market data, no fake/local DB used for this investigation):
+
+1. **Crash left zero cycle-log trace.** A real trade (POLICYBZR) had already
+   been opened in 2 variants (`bot_751/puradin_trailing_ema`,
+   `bot_751/puradin_trailing_atr`, entries at 09:52:17/09:52:47) but
+   `ute_cycle_log` had ZERO `entry_scan` rows — only `position_management`
+   rows existed. Root cause: `run_full_scan_cycle()` had no crash-handling —
+   an exception anywhere after Stage 1/2 (real per-DB-write trade entries
+   already committed by then) would abort the function before it ever
+   reached its own `db.log_cycle(status="OK", ...)` call at the end, leaving
+   the dashboard's cycle log silently blank despite live trading having
+   happened. Could not reproduce the exact original crash (a manual re-run
+   completed cleanly), so root-caused via the SYMPTOM, not a captured
+   traceback. **Fixed**: wrapped the cycle body in try/except,
+   `db.log_cycle(status="ERROR", stage="entry_scan", error=str(e))` before
+   re-raising — a crash is now always visible in the dashboard.
+2. **Overlapping cycles.** While investigating #1, a manually-triggered
+   `run_full_scan_cycle()` call overlapped with the Cloud app's own
+   scheduled cron run (a scan cycle can take minutes of real network I/O,
+   easily overlapping a manual "Run Scan Now" click or a slow-running
+   scheduled instance). Observed: the cycle-log's `entered=[...]` list
+   incorrectly included 2 variants that were NOT newly entered by that
+   cycle (they already had open positions from an earlier cycle) — verified
+   via direct DB query that no duplicate trade row was actually created
+   (`was_flat` still correctly gated the real write), so this wasn't a
+   capital-correctness bug, but cycle logs became misleading and Stage 1/2
+   API load doubled up needlessly. **Fixed**: `db.try_acquire_scan_lock()`
+   (new, non-blocking `pg_try_advisory_lock`, distinct key from the
+   per-variant exit lock) — a second overlapping call now skips cleanly
+   (`status: "skipped"`, logged as `SKIPPED`) instead of racing.
+
+Both fixes live-verified directly against production Postgres before being
+committed: the lock was acquired/blocked/released correctly across 3
+sequential attempts, and a simulated crash correctly produced an `ERROR`
+cycle_log row. 2 new regression tests added
+(`tests/test_end_to_end_cycle.py`, SQLite-backed) — **57/57 tests pass**.
+
+Also confirmed working correctly during this session: position-management
+job firing reliably every ~2 min; Stage 1 fetching all 751 symbols (2 benign
+`DUMMYINXGN`/`DUMMYTRVN` placeholder-symbol misses, expected); Stage 2
+dedup (85 requested → 83 fetched, 2 real-symbol Angel One fallback misses).
+
+**Still open for Phase 6**: Stage 1's 6-worker parallel fetch timing budget,
+chunk-level fallback triggering under a REAL failure (not just the
+already-observed DUMMY-symbol case), Stage 2's dedup savings measured
+against the sibling bots' baseline, and a full trade lifecycle (entry →
+target-hit → trailing-exit or stop-loss → close) observed live end-to-end —
+today only got as far as open entries, no exits observed yet.

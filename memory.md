@@ -411,5 +411,44 @@ project's own rules.md.
   this project's `APP_URL` was filled in with the real live URL immediately,
   unlike bot-v3/swing-trading-bot's copies which still carry unfilled
   placeholders. Live-tested the wake script locally against the real
-  deployed app before committing. **Only Phase 6 (live market-hours
-  verification) remains on this project.**
+  deployed app before committing.
+- **Phase 6 started for real, 2026-08-11 — first live-market debugging
+  session, 2 real bugs found and fixed.** User noticed the admin dashboard
+  saying "no cycles run yet" ~37 min into market hours and asked for a
+  proper investigation ("design test cases, run them, report back") rather
+  than a guess-and-patch. Investigated directly against the real production
+  Supabase DB (not a local/fake one) — found a REAL trade already open
+  (POLICYBZR, 2 `bot_751` puradin variants, entered ~09:52) with ZERO
+  matching `entry_scan` cycle_log row, meaning `run_full_scan_cycle()` had
+  crashed mid-execution AFTER committing real trades but BEFORE its own
+  final `db.log_cycle()` call — a genuinely dangerous class of bug (real
+  state changes with no audit trail) that could not be reproduced on demand
+  (a manual re-run completed cleanly), so was root-caused from the SYMPTOM
+  rather than a captured traceback. While investigating, ALSO caught a
+  second live bug: a manual re-run overlapped with the Cloud app's own
+  scheduled cron cycle (Stage 1+2 real-network fetches take minutes,
+  easily long enough to overlap another trigger), producing a misleading
+  cycle-log `entered=[...]` list — verified via direct DB query that this
+  did NOT cause an actual duplicate trade (capital-safety held), but was a
+  real data-integrity/observability gap.
+  Fixed both same-day: (1) `run_full_scan_cycle()` now wraps its body in
+  try/except with a guaranteed `db.log_cycle(status="ERROR", ...)` before
+  re-raising — a crash can never again vanish without a trace. (2) new
+  `db.try_acquire_scan_lock()` (non-blocking `pg_try_advisory_lock`, a
+  THIRD lock key in `db.py` now — distinct from the per-variant
+  `acquire_trade_lock` used for exits) makes a second overlapping scan
+  cycle skip cleanly instead of racing. Both live-verified against real
+  Postgres before committing (lock acquire/block/release sequence,
+  simulated crash producing a real `ERROR` row) — same rigor as every other
+  fix this session, not just unit-tested in isolation. 2 new regression
+  tests added, 57/57 pass.
+  **Pattern worth remembering, reinforced again**: production Postgres
+  live-testing keeps finding real bugs that mocked/local-SQLite tests
+  structurally cannot — three separate sessions now (broker auth bugs,
+  code-review concurrency findings, and now this crash-visibility +
+  overlap bug) where "run it for real, look at what actually happened in
+  the DB" was the only way to the real root cause.
+  Still open: Phase 6's original scope (Stage 1 timing budget, a REAL
+  fallback-trigger test, Stage 2 dedup-savings measurement, and one full
+  observed trade lifecycle including an exit) — today only got as far as
+  entries, no exit observed live yet.

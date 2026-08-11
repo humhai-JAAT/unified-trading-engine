@@ -130,3 +130,52 @@ def test_full_scan_cycle_reports_stage1_warnings_when_no_accounts_configured(wir
     assert result["status"] == "open"
     assert any("No broker accounts configured" in w for w in result["warnings"])
     assert result["entered_variants"] == []
+
+
+def test_full_scan_cycle_logs_error_and_reraises_on_mid_cycle_crash(wired_db):
+    """2026-08-11 live-market finding: a crash inside run_full_scan_cycle (after
+    real trades had already been opened for some variants) left ZERO cycle_log
+    row — the dashboard showed "no cycles run yet" despite live trading having
+    actually happened. Live-verified the fix against real Postgres the same
+    day; this is the SQLite-backed regression test for it."""
+    from engine import scheduler
+
+    fixed_now = pd.Timestamp("2026-08-03 09:21", tz="Asia/Kolkata").to_pydatetime()
+
+    with patch("engine.nse_universe.get_universe_symbols", return_value={"AAA"}), \
+         patch("engine.stage1_ranking.fetch_ranking_data", side_effect=RuntimeError("simulated crash")), \
+         patch("engine.scheduler._now_ist", return_value=fixed_now), \
+         patch("engine.scheduler.market_status", return_value="open"):
+
+        with pytest.raises(RuntimeError, match="simulated crash"):
+            scheduler.run_full_scan_cycle(config.load_settings())
+
+    logs = wired_db.get_cycle_logs(limit=1)
+    assert not logs.empty, "a crash must still leave a cycle_log row, not vanish silently"
+    assert logs.iloc[0]["status"] == "ERROR"
+    assert logs.iloc[0]["stage"] == "entry_scan"
+    assert "simulated crash" in logs.iloc[0]["error"]
+
+
+def test_full_scan_cycle_skips_cleanly_when_another_cycle_already_holds_the_scan_lock(wired_db):
+    """2026-08-11 live-market finding: a scheduled cron run and a manual "Run
+    Scan Now" click overlapped in production, producing an inconsistent
+    'entered' list in the cycle log (was_flat still correctly prevented an
+    actual duplicate trade row — verified against real data — but the log
+    became misleading and Stage 1/2 API load doubled up needlessly)."""
+    from engine import scheduler
+
+    fixed_now = pd.Timestamp("2026-08-03 09:21", tz="Asia/Kolkata").to_pydatetime()
+
+    with patch("engine.scheduler.db.try_acquire_scan_lock") as mock_lock, \
+         patch("engine.scheduler._now_ist", return_value=fixed_now), \
+         patch("engine.scheduler.market_status", return_value="open"):
+        mock_lock.return_value.__enter__.return_value = False  # another cycle already holds it
+
+        result = scheduler.run_full_scan_cycle(config.load_settings())
+
+    assert result["status"] == "skipped"
+    assert result["reason"] == "scan_already_in_progress"
+
+    logs = wired_db.get_cycle_logs(limit=1)
+    assert logs.iloc[0]["status"] == "SKIPPED"

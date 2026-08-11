@@ -91,7 +91,15 @@ def run_position_management_cycle(settings: dict | None = None) -> dict:
 def run_full_scan_cycle(settings: dict | None = None) -> dict:
     """Stage 1 (shared ranking fetch) -> per-universe filter -> Stage 2
     (shared, deduped candle fetch) -> all 12 variants' scan_for_entry. See
-    Architecture.md for the full pipeline this implements."""
+    Architecture.md for the full pipeline this implements.
+
+    Guards against two overlapping executions (2026-08-11 live-market
+    finding — a scheduled cron run and a manual "Run Scan Now" click
+    overlapped, producing a misleading cycle-log entry) via
+    db.try_acquire_scan_lock(), and guarantees a cycle-log row even on a
+    mid-cycle crash (same incident — a crash previously left real trades
+    open with ZERO log_cycle row, so the dashboard showed "no cycles run
+    yet" despite live trading having actually happened)."""
     settings = settings or config.load_settings()
     db.init_db()
     db.prune_cycle_logs(retention_days=7)
@@ -102,62 +110,74 @@ def run_full_scan_cycle(settings: dict | None = None) -> dict:
         db.log_cycle(status="MARKET_CLOSED", stage="entry_scan", message=f"market_status={status}")
         return {"status": status}
 
-    # Stage 1 — one shared fetch for bot_751's full universe.
-    all_symbols = list(nse_universe.get_universe_symbols("total_market"))
-    stage1_result = stage1_ranking.fetch_ranking_data(all_symbols)
-    if stage1_result.warnings:
-        logger.warning(f"Stage 1 warnings: {stage1_result.warnings}")
+    with db.try_acquire_scan_lock() as acquired:
+        if not acquired:
+            logger.warning("Entry scan cycle skipped — another cycle is already in progress")
+            db.log_cycle(status="SKIPPED", stage="entry_scan",
+                          message="another entry-scan cycle was already in progress")
+            return {"status": "skipped", "reason": "scan_already_in_progress"}
 
-    # Per-universe filter — no new API calls, just filtering the shared list.
-    top_lists: dict[str, "pd.DataFrame"] = {}
-    subset_warnings: list[str] = []
-    for universe_bot in config.UNIVERSE_BOTS:
-        top_df, missing = nse_universe.filter_to_universe(
-            stage1_result.rank_list, universe_bot["universe"], settings["gainers_pool_size"]
-        )
-        top_lists[universe_bot["key"]] = top_df
-        if missing:
-            subset_warnings.append(
-                f"{universe_bot['key']}: {len(missing)} constituent symbol(s) missing from "
-                f"Stage 1's rank list (likely index-CSV cache timing mismatch): {missing[:10]}"
+        try:
+            # Stage 1 — one shared fetch for bot_751's full universe.
+            all_symbols = list(nse_universe.get_universe_symbols("total_market"))
+            stage1_result = stage1_ranking.fetch_ranking_data(all_symbols)
+            if stage1_result.warnings:
+                logger.warning(f"Stage 1 warnings: {stage1_result.warnings}")
+
+            # Per-universe filter — no new API calls, just filtering the shared list.
+            top_lists: dict[str, "pd.DataFrame"] = {}
+            subset_warnings: list[str] = []
+            for universe_bot in config.UNIVERSE_BOTS:
+                top_df, missing = nse_universe.filter_to_universe(
+                    stage1_result.rank_list, universe_bot["universe"], settings["gainers_pool_size"]
+                )
+                top_lists[universe_bot["key"]] = top_df
+                if missing:
+                    subset_warnings.append(
+                        f"{universe_bot['key']}: {len(missing)} constituent symbol(s) missing from "
+                        f"Stage 1's rank list (likely index-CSV cache timing mismatch): {missing[:10]}"
+                    )
+            if subset_warnings:
+                logger.warning(f"Subset-safety warnings: {subset_warnings}")
+
+            # Stage 2 — merge/dedup all 3 universes' top-N lists, fetch candles once each.
+            unique_symbols = stage2_candles.merge_unique_symbols(top_lists)
+            stage2_result = stage2_candles.fetch_candle_history(unique_symbols)
+            if stage2_result.warnings:
+                logger.warning(f"Stage 2 warnings: {stage2_result.warnings}")
+
+            # All 12 variants scan against the shared data — was_flat determined fresh
+            # per variant right before its own scan (each variant is independent).
+            scan_results = {}
+            for universe_bot in config.UNIVERSE_BOTS:
+                for variant_cfg in config.VARIANTS:
+                    variant_id = f"{universe_bot['key']}/{variant_cfg['key']}"
+                    was_flat = db.get_open_trade(variant_id) is None
+                    scan_results[variant_id] = variant_engine.scan_for_entry(
+                        universe_bot["key"], variant_cfg, settings, now,
+                        top_lists[universe_bot["key"]], stage2_result.candles_by_symbol, was_flat,
+                    )
+
+            all_warnings = stage1_result.warnings + subset_warnings + stage2_result.warnings
+            entered = [v for v, r in scan_results.items() if r.get("action") == "enter"]
+            db.log_cycle(
+                status="OK", stage="entry_scan",
+                symbols_scanned=stage2_result.symbols_fetched,
+                message=f"entered={entered}",
+                warnings="; ".join(all_warnings) if all_warnings else "",
             )
-    if subset_warnings:
-        logger.warning(f"Subset-safety warnings: {subset_warnings}")
-
-    # Stage 2 — merge/dedup all 3 universes' top-N lists, fetch candles once each.
-    unique_symbols = stage2_candles.merge_unique_symbols(top_lists)
-    stage2_result = stage2_candles.fetch_candle_history(unique_symbols)
-    if stage2_result.warnings:
-        logger.warning(f"Stage 2 warnings: {stage2_result.warnings}")
-
-    # All 12 variants scan against the shared data — was_flat determined fresh
-    # per variant right before its own scan (each variant is independent).
-    scan_results = {}
-    for universe_bot in config.UNIVERSE_BOTS:
-        for variant_cfg in config.VARIANTS:
-            variant_id = f"{universe_bot['key']}/{variant_cfg['key']}"
-            was_flat = db.get_open_trade(variant_id) is None
-            scan_results[variant_id] = variant_engine.scan_for_entry(
-                universe_bot["key"], variant_cfg, settings, now,
-                top_lists[universe_bot["key"]], stage2_result.candles_by_symbol, was_flat,
-            )
-
-    all_warnings = stage1_result.warnings + subset_warnings + stage2_result.warnings
-    entered = [v for v, r in scan_results.items() if r.get("action") == "enter"]
-    db.log_cycle(
-        status="OK", stage="entry_scan",
-        symbols_scanned=stage2_result.symbols_fetched,
-        message=f"entered={entered}",
-        warnings="; ".join(all_warnings) if all_warnings else "",
-    )
-    return {
-        "status": "open", "stage1_chunks_total": stage1_result.chunks_total,
-        "stage1_chunks_fallback_used": stage1_result.chunks_fallback_used,
-        "stage1_chunks_failed": stage1_result.chunks_failed,
-        "stage2_symbols_requested": stage2_result.symbols_requested,
-        "stage2_symbols_fetched": stage2_result.symbols_fetched,
-        "warnings": all_warnings, "scan": scan_results, "entered_variants": entered,
-    }
+            return {
+                "status": "open", "stage1_chunks_total": stage1_result.chunks_total,
+                "stage1_chunks_fallback_used": stage1_result.chunks_fallback_used,
+                "stage1_chunks_failed": stage1_result.chunks_failed,
+                "stage2_symbols_requested": stage2_result.symbols_requested,
+                "stage2_symbols_fetched": stage2_result.symbols_fetched,
+                "warnings": all_warnings, "scan": scan_results, "entered_variants": entered,
+            }
+        except Exception as e:
+            logger.error(f"Entry scan cycle crashed mid-execution: {e}")
+            db.log_cycle(status="ERROR", stage="entry_scan", error=str(e))
+            raise
 
 
 def _position_job():

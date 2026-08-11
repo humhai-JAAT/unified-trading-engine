@@ -175,6 +175,42 @@ def acquire_trade_lock(variant_id: str):
         conn.close()
 
 
+_SCAN_CYCLE_LOCK_KEY = 728193042  # arbitrary fixed key, distinct from any per-variant crc32 value
+
+
+@contextmanager
+def try_acquire_scan_lock():
+    """Yields True if this caller got the lock, False if another
+    run_full_scan_cycle() is already in progress — NON-blocking
+    (pg_try_advisory_lock, not pg_advisory_xact_lock), because Stage 1+2 can
+    take minutes of real network I/O; waiting would just queue redundant
+    work, not add safety.
+
+    2026-08-11 live-market finding: a scheduled cron run and a manual
+    "Run Scan Now" click can overlap (only the scheduled job itself was ever
+    protected via APScheduler's own max_instances=1, which doesn't cover a
+    manual trigger racing it). Observed an overlap produce an inconsistent
+    'entered' list in the cycle log — was_flat still correctly gated real
+    double-entry (verified no duplicate trade rows), so this wasn't a
+    capital-correctness bug, but cycle logs became misleading and Stage 1/2
+    API load doubled up needlessly. This lock makes a second overlapping
+    call skip cleanly instead."""
+    engine = get_engine()
+    if engine.dialect.name != "postgresql":
+        yield True
+        return
+    conn = engine.connect()
+    try:
+        got = conn.execute(text("SELECT pg_try_advisory_lock(:key)"), {"key": _SCAN_CYCLE_LOCK_KEY}).scalar()
+        try:
+            yield bool(got)
+        finally:
+            if got:
+                conn.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": _SCAN_CYCLE_LOCK_KEY})
+    finally:
+        conn.close()
+
+
 def init_db() -> None:
     engine = get_engine()
     schema = POSTGRES_SCHEMA if engine.dialect.name == "postgresql" else SQLITE_SCHEMA
