@@ -209,11 +209,33 @@ def render_variant_panel(universe_bot_key: str, variant_cfg: dict, settings: dic
     if not trade:
         st.info("No open position — scanning for a fresh entry signal.")
     else:
+        # 2026-08-11 live finding: this card only ever showed static entry-time
+        # fields — no current price, no live P&L — unlike the sibling bots
+        # (see bot-v3's dashboard_view.py), which fetch a live quote and show
+        # Current + Unrealized P&L. Same pattern here, plus this project's own
+        # peak/trough (unique to the trailing-exit hard-floor design).
+        current_price = trade["entry_price"]
+        accounts = get_configured_accounts()
+        pool = accounts["groww"] or accounts["angelone"]
+        if pool:
+            try:
+                quotes = pool[0].fetch_quotes_batch([trade["symbol"]])
+                if quotes:
+                    current_price = quotes[0].last_price
+            except Exception:
+                pass  # fail closed — show entry price rather than crash the panel
+
+        unrealized_pnl = (current_price - trade["entry_price"]) * trade["quantity"]
+        unrealized_pct = unrealized_pnl / trade["capital_used"] * 100 if trade["capital_used"] else 0.0
+
         target_hit = bool(trade.get("target_hit"))
         mode_label = "🎯 Trailing (target hit)" if target_hit else "🎯 Fixed SL / target"
         fields = [
             ("Symbol", trade["symbol"]), ("Entry", format_currency(trade["entry_price"])),
+            ("Current", format_currency(current_price)),
+            ("Unrealized P&L", f"{format_currency(unrealized_pnl)} ({format_pct(unrealized_pct)})"),
             ("Mode", mode_label), ("Qty", trade["quantity"]),
+            ("Peak", format_currency(trade["peak_price"])), ("Trough", format_currency(trade["trough_price"])),
             ("Capital Used", format_currency(trade["capital_used"])), ("Entered", trade["entry_time"]),
         ]
         fields_html = "".join(

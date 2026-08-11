@@ -105,6 +105,19 @@ CREATE TABLE IF NOT EXISTS ute_checkpoint_log (
     trade_id INTEGER,
     variant_id TEXT NOT NULL
 );
+
+-- Small shared key/value store — NOT the same thing as engine.config's
+-- settings.yaml (a LOCAL FILE). 2026-08-11 live finding: admin app (app.py)
+-- and viewer app (viewer_app.py) are TWO SEPARATE Streamlit Cloud
+-- deployments, each with its OWN isolated filesystem — a value admin saves
+-- to its local settings.yaml is invisible to viewer, which runs in a
+-- different container entirely. Anything that must be visible across BOTH
+-- apps (like which variant is "public") has to go through the ONE thing
+-- they actually share: this database. See get_setting()/set_setting().
+CREATE TABLE IF NOT EXISTS ute_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
 """
 
 SQLITE_SCHEMA = _variant_tables_sql("INTEGER PRIMARY KEY AUTOINCREMENT") + "\n\n" \
@@ -364,6 +377,29 @@ def prune_cycle_logs(retention_days: int = 7) -> int:
             {"cutoff": cutoff},
         )
         return result.rowcount
+
+
+def get_setting(key: str, default: str | None = None) -> str | None:
+    """Reads from ute_settings — the ONE thing admin and viewer actually
+    share (see ute_settings' schema comment). Use this, not
+    engine.config.load_settings(), for anything that must be visible to
+    both apps."""
+    with get_engine().connect() as conn:
+        row = conn.execute(text("SELECT value FROM ute_settings WHERE key=:k"), {"k": key}).first()
+        return row[0] if row else default
+
+
+def set_setting(key: str, value: str) -> None:
+    with get_engine().begin() as conn:
+        if conn.dialect.name == "postgresql":
+            conn.execute(
+                text("INSERT INTO ute_settings (key, value) VALUES (:k, :v) "
+                     "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"),
+                {"k": key, "v": value},
+            )
+        else:
+            conn.execute(text("DELETE FROM ute_settings WHERE key=:k"), {"k": key})
+            conn.execute(text("INSERT INTO ute_settings (key, value) VALUES (:k, :v)"), {"k": key, "v": value})
 
 
 def get_checkpoints_used_today(variant_id: str) -> set[str]:

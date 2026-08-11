@@ -68,6 +68,29 @@ def test_trade_open_close_round_trip(sqlite_db):
     assert closed.iloc[0]["net_pnl"] == pytest.approx((2600 - 2500) * 4 - 15.0 - 16.0)
 
 
+def test_get_setting_returns_default_when_unset(sqlite_db):
+    """2026-08-11 live finding: admin (app.py) and viewer (viewer_app.py) are
+    two SEPARATE Streamlit Cloud deployments with separate local filesystems
+    — engine.config's settings.yaml can't be used to share a value between
+    them, only the shared database (ute_settings) actually reaches both."""
+    db = sqlite_db
+    assert db.get_setting("public_variant", "") == ""
+    assert db.get_setting("nonexistent_key") is None
+
+
+def test_set_setting_then_get_returns_the_new_value(sqlite_db):
+    db = sqlite_db
+    db.set_setting("public_variant", "bot_751/puradin_trailing_ema")
+    assert db.get_setting("public_variant") == "bot_751/puradin_trailing_ema"
+
+
+def test_set_setting_overwrites_an_existing_value(sqlite_db):
+    db = sqlite_db
+    db.set_setting("public_variant", "bot_751/puradin_trailing_ema")
+    db.set_setting("public_variant", "bot_400/subh30_trailing_atr")
+    assert db.get_setting("public_variant") == "bot_400/subh30_trailing_atr"
+
+
 def test_variant_isolation_capital_never_crosses(sqlite_db):
     db = sqlite_db
     v1 = "bot_751/subh30_trailing_ema"

@@ -448,3 +448,35 @@ already-observed DUMMY-symbol case), Stage 2's dedup savings measured
 against the sibling bots' baseline, and a full trade lifecycle (entry →
 target-hit → trailing-exit or stop-loss → close) observed live end-to-end —
 today only got as far as open entries, no exits observed yet.
+
+**Same day, 3 more issues reported by the user after checking the deployed
+apps — all fixed:**
+
+1. **`public_variant` never reached the viewer app.** The "🌐 Public Viewer"
+   control (built earlier today) wrote to `engine.config`'s `settings.yaml`
+   — a LOCAL FILE. Root cause: admin (`app.py`) and viewer (`viewer_app.py`)
+   are TWO SEPARATE Streamlit Cloud deployments, each with its OWN isolated
+   filesystem — a value admin saved was invisible to viewer's container.
+   **Fixed**: new `ute_settings` key/value table (Postgres/SQLite, via
+   `db.get_setting()`/`db.set_setting()`) — the one thing both apps actually
+   share. Both `app.py` and `viewer_app.py` switched to it. Live-verified
+   against real Postgres: table auto-created via `init_db()`, set/get/update
+   round-trip all correct.
+2. **Open-position card showed no live tracking** — only static entry-time
+   fields (Symbol, Entry, Mode, Qty, Capital, Entered). Compared against the
+   sibling bots (`bot-v3/botv3/dashboard_view.py`), which fetch a live quote
+   and show Current price + Unrealized P&L — this project's card never had
+   that. **Fixed**: `render_variant_panel()` now fetches a live quote (fails
+   closed to the entry price if the fetch errors) and shows Current price,
+   Unrealized P&L (₹ and %), and — unique to this project — Peak/Trough
+   (already tracked on the trade row for the trailing-exit hard floor, just
+   never displayed). Live-verified against the real open POLICYBZR position:
+   entry ₹1660 vs a live ₹1630 quote → correctly showed -1.80% unrealized.
+3. **"Why does position-management only run every 2 min?"** — clarified,
+   not a bug: that's the REST safety-net's designed interval (unrelated to
+   `engine/live_feed.py`'s ~2-SECOND websocket tick loop built yesterday,
+   which reacts far faster for open positions when a Groww account is
+   configured — as it is here). No code change.
+
+3 new regression tests (`tests/test_db_and_config.py`, SQLite-backed) for
+`get_setting`/`set_setting`. **60/60 tests pass.**

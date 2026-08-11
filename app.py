@@ -111,7 +111,12 @@ st.sidebar.caption("All 12 keep scanning/trading independently regardless of whi
 st.sidebar.divider()
 st.sidebar.markdown("### 🌐 Public Viewer")
 _public_options = [""] + config.all_variant_ids()
-_public_current = settings.get("public_variant", "")
+# db.get_setting, NOT engine.config.load_settings()/settings.get("public_variant") —
+# admin and viewer are two SEPARATE Streamlit Cloud deployments with separate local
+# filesystems; settings.yaml on admin's disk is invisible to viewer's container. The
+# database is the only thing both apps actually share (2026-08-11 live finding — this
+# control looked like it worked from the admin side but never reached the viewer app).
+_public_current = db.get_setting("public_variant", "") or ""
 public_variant = st.sidebar.selectbox(
     "Variant shown on the Viewer app",
     options=_public_options,
@@ -119,7 +124,7 @@ public_variant = st.sidebar.selectbox(
     format_func=lambda v: "— none (viewer shows nothing) —" if v == "" else v.replace("/", " · ").replace("_", " "),
 )
 if public_variant != _public_current:
-    config.save_settings({**settings, "public_variant": public_variant})
+    db.set_setting("public_variant", public_variant)
     st.sidebar.success("Viewer app updated.")
     st.rerun()
 st.sidebar.caption("Controls what the separate read-only Viewer app shows — visitors there can't pick their own.")

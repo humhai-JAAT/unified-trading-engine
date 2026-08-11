@@ -452,3 +452,32 @@ project's own rules.md.
   fallback-trigger test, Stage 2 dedup-savings measurement, and one full
   observed trade lifecycle including an exit) — today only got as far as
   entries, no exit observed live yet.
+- **Same day, immediately after — user reported 3 more things after
+  actually using the deployed apps.** Two were real bugs, one was a design
+  question. **Important process note**: the `public_variant` bug is a
+  DIRECT consequence of not having realized, when building that feature
+  yesterday, that admin (`app.py`) and viewer (`viewer_app.py`) are TWO
+  SEPARATE Streamlit Cloud deployments with SEPARATE filesystems —
+  `engine.config`'s `settings.yaml` is a local file, invisible across that
+  boundary. The feature looked correct in local testing (single process,
+  one filesystem) and even looked correct from the admin side on Cloud (the
+  value saved fine) — the break was invisible until someone actually opened
+  the SEPARATE viewer app and looked. **Lesson: for any two-Streamlit-app
+  project, "did I test this from the OTHER app's perspective, not just the
+  one I was editing" is a real question to ask before calling a
+  cross-app feature done** — this bit twice in one day pattern (websocket
+  research → scoped correctly; this → not caught until the user looked).
+  Fixed: new `ute_settings` DB table (`db.get_setting`/`db.set_setting`) —
+  the database is genuinely the only thing both apps share; local files and
+  in-memory state are not. Second bug: the open-position card only ever
+  showed static entry-time fields, no live price/P&L — compared directly
+  against the sibling bots' `dashboard_view.py` (bot-v3) to confirm what
+  "live tracking" was supposed to look like rather than guessing, then
+  matched that pattern (fetch a live quote, show Current + Unrealized P&L)
+  plus this project's own peak/trough (already tracked, just never
+  displayed). Both fixes live-verified against real Postgres/real market
+  data (real open POLICYBZR position: entry ₹1660 vs live ₹1630 → correct
+  -1.80% shown). Third item (why 2-min position management) was just a
+  design clarification, not a bug — that's the REST safety-net's interval,
+  separate from `live_feed.py`'s much-faster websocket path built the day
+  before. 3 new tests, 60/60 pass, committed and pushed same session.
