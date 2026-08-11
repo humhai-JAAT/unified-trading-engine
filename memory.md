@@ -481,3 +481,39 @@ project's own rules.md.
   design clarification, not a bug — that's the REST safety-net's interval,
   separate from `live_feed.py`'s much-faster websocket path built the day
   before. 3 new tests, 60/60 pass, committed and pushed same session.
+- **Same session, immediately after — 2 more real findings from continued
+  live debugging.** (1) Root-caused the POLICYBZR entry-timing question
+  properly instead of assuming: fetched real candles, ran them through
+  `strategy.build_indicators()` directly, and found the user's own
+  TradingView reference signal (Aug 10, ~10:50) genuinely matches what our
+  strategy code would have computed — but `ute_cycle_log` has ZERO rows for
+  all of Aug 10, meaning the scheduler simply wasn't running that entire day
+  (killed repeatedly by that day's own heavy Streamlit Cloud redeploy
+  churn). Today's trade is a separate, independently legitimate signal on
+  the same stock. Not a strategy bug — confirms the "must click Start after
+  every push" operational gap is a real, recurring cost, not a one-off.
+  (2) A worsening candle-fetch-failure warning (14/85 → 38/77) turned out to
+  be a SEPARATE, stricter rate limit specifically on Groww's
+  `get_access_token()` endpoint (not the regular market-data rate limit,
+  which the code already handles correctly) — exhausted by this session's
+  OWN debugging pattern: dozens of short-lived local test scripts, each
+  starting with an empty in-memory token cache, each forcing a fresh
+  `get_access_token()` call, sharing rate-limit budget with the live Cloud
+  app's account and breaking ITS candle fetches too. **Self-inflicted, worth
+  remembering**: aggressive live-testing (this session's whole methodology,
+  repeatedly validated as valuable for finding real bugs) has a real cost
+  when the thing being tested has its OWN separate rate limits on auth/token
+  endpoints, not just data endpoints — a single long-running process
+  wouldn't hit this, only repeated fresh-process invocations would. Fixed
+  with a disk-persisted token cache (`data/groww_token_cache_{account_id}.json`,
+  gitignored) so a still-valid token survives a process restart. Could not
+  live-verify against the real rate limit same-session (it was still
+  cooling down) — deliberately stopped hammering it further rather than
+  making the cooldown worse; validated via 5 new mocked tests instead, an
+  explicit exception to this session's usual "always live-verify" rule,
+  made consciously rather than by default. Also fixed a test-isolation bug
+  this surfaced: `test_broker_accounts.py` used the REAL production
+  `account_id="groww_1"`, which would have let a real cached token silently
+  short-circuit the mocked-`get_access_token` test assertions once real
+  cache files existed — switched to an isolated account_id + tmp_path.
+  62/62 tests pass.

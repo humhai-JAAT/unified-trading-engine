@@ -480,3 +480,50 @@ apps — all fixed:**
 
 3 new regression tests (`tests/test_db_and_config.py`, SQLite-backed) for
 `get_setting`/`set_setting`. **60/60 tests pass.**
+
+**Same day, immediately after — user asked about a warning banner + investigated
+entry timing further. 2 more real findings, one fixed, one explained:**
+
+1. **User's deeper question: why did the POLICYBZR trade enter today (Aug 11)
+   instead of matching their own TradingView reference chart's signal
+   (Aug 10, ~10:45-10:51)?** Investigated by fetching the real 5-min candles
+   for POLICYBZR and running them through `strategy.build_indicators()`
+   directly — found the EXACT signal history: a fresh `entry_signal` genuinely
+   fired 2026-08-10 10:50-10:55 (arm_cycle 10:15), matching the user's
+   TradingView chart almost exactly. But `ute_cycle_log` has **ZERO rows for
+   all of 2026-08-10** — the scheduler was never actually running that whole
+   day (this project's own Streamlit-Cloud-redeploys-reset-the-scheduler
+   pattern, hit repeatedly during yesterday's heavy deployment work). The
+   Aug-10 signal was never evaluated at all — nothing to exit by square-off
+   either, since nothing was ever entered. Today's trade (arm 09:15, fresh
+   signal 09:50, entered 09:52) is a SEPARATE, independently legitimate
+   signal on the same stock, correctly timed per the strategy's own rules.
+   **Not a code bug** — an operational gap (now largely resolved: deployment
+   churn is mostly done, keep-awake is live, but the "must click Start after
+   every push" quirk remains real and caused this).
+2. **Warning banner showing rising candle-fetch failures (14/85 → 38/77) even
+   with Angel One fallback.** Root-caused by testing the exact failing
+   symbols directly: `"The rate limit for the Groww API has been exceeded"`
+   — NOT the regular market-data rate limit (`GROWW_QUOTE_RATE_SECONDS`
+   etc., already handled correctly), but a separate, stricter rate limit on
+   `get_access_token()` itself (the token-GENERATION endpoint). Caused by
+   this session's own heavy debugging — dozens of short-lived local test
+   scripts, each starting with an empty in-memory token cache, each calling
+   `get_access_token()` fresh — which shares its rate-limit budget with the
+   live Cloud app's own account, breaking the Cloud app's candle fetches too.
+   **Fixed**: added a second-level DISK cache for the Groww access token
+   (`GrowwAccount._load_cached_token()`/`_save_cached_token()`,
+   `data/groww_token_cache_{account_id}.json`, gitignored) — a still-valid
+   token now survives a process restart (mine or Streamlit Cloud's) instead
+   of forcing a fresh `get_access_token()` call every time. 5 new tests
+   (mocked — the real rate limit was still cooling down at fix-time, so this
+   couldn't be live-verified same-session; the mocked tests do verify the
+   cache-hit/cache-miss/expired-cache logic paths correctly). Also fixed a
+   related test-isolation bug this surfaced: `tests/test_broker_accounts.py`
+   was constructing `GrowwAccount(account_id="groww_1", ...)` — the SAME
+   account_id the real production account uses — which would have let a
+   real cached token silently short-circuit the mocked `get_access_token()`
+   assertions once this fix started writing real cache files. Tests now use
+   an isolated `account_id` + a `tmp_path`-redirected cache file.
+
+62/62 tests pass.

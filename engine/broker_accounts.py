@@ -337,6 +337,7 @@ class GrowwAccount(BrokerAccount):
         self._client = None
         self._client_expires_at = 0.0  # real `exp` claim from the token, not a guessed TTL
         self._instrument_cache_path = PROJECT_ROOT / "data" / f"groww_instrument_master_{account_id}.csv"
+        self._token_cache_path = PROJECT_ROOT / "data" / f"groww_token_cache_{account_id}.json"
         super().__init__()
 
     def _quote_rate_seconds(self) -> float:
@@ -353,8 +354,34 @@ class GrowwAccount(BrokerAccount):
             return self._client
         if not self.is_configured():
             return None
+
         try:
             from growwapi import GrowwAPI  # lazy import — only needed if configured
+        except Exception as e:
+            logger.warning(f"[{self.account_id}] Groww client init failed: {e}")
+            return None
+
+        # Second-level cache: a token another process persisted to disk (this
+        # SAME data/ dir every process on this machine/container shares) may
+        # still be valid — reuse it before calling get_access_token() again.
+        # Live-hit 2026-08-11: get_access_token() has its OWN rate limit,
+        # separate from and stricter than the regular market-data rate limit
+        # (GROWW_QUOTE_RATE_SECONDS etc.) — repeated short-lived script
+        # invocations during a debugging session (each with an empty
+        # in-memory cache) exhausted it and broke the deployed Cloud app's
+        # OWN candle fetches too, since they share one account's budget.
+        cached = self._load_cached_token()
+        if cached is not None:
+            token, exp = cached
+            if time.time() < exp - GROWW_TOKEN_REFRESH_BUFFER_SECONDS:
+                try:
+                    self._client = GrowwAPI(token)
+                    self._client_expires_at = exp
+                    return self._client
+                except Exception as e:
+                    logger.warning(f"[{self.account_id}] Groww client init from cached token failed: {e}")
+
+        try:
             # GrowwAPI takes a single session token, not (api_key, api_secret) directly —
             # exchange the api_key for a token first (live-verified 2026-08-09; the
             # SDK's real constructor signature is `GrowwAPI(token)`). TOTP preferred
@@ -373,10 +400,27 @@ class GrowwAccount(BrokerAccount):
             # token can't be decoded, so a parse surprise degrades, not crashes.
             exp = _jwt_exp_timestamp(token)
             self._client_expires_at = exp if exp is not None else time.time() + 3600
+            self._save_cached_token(token, self._client_expires_at)
         except Exception as e:
             logger.warning(f"[{self.account_id}] Groww client init failed: {e}")
             return None
         return self._client
+
+    def _load_cached_token(self) -> "tuple[str, float] | None":
+        try:
+            if not self._token_cache_path.exists():
+                return None
+            data = json.loads(self._token_cache_path.read_text())
+            return data["token"], float(data["expires_at"])
+        except Exception:
+            return None
+
+    def _save_cached_token(self, token: str, expires_at: float) -> None:
+        try:
+            self._token_cache_path.parent.mkdir(parents=True, exist_ok=True)
+            self._token_cache_path.write_text(json.dumps({"token": token, "expires_at": expires_at}))
+        except Exception as e:
+            logger.warning(f"[{self.account_id}] could not persist Groww token cache: {e}")
 
     def get_client(self):
         """Public accessor for the authenticated `GrowwAPI` instance — used by
