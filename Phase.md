@@ -527,3 +527,48 @@ entry timing further. 2 more real findings, one fixed, one explained:**
    an isolated `account_id` + a `tmp_path`-redirected cache file.
 
 62/62 tests pass.
+
+**Same day, immediately after — user asked 3 more sharp questions about the
+warning banner and cycle timing:**
+
+1. **"Why does bot_551's page show the SAME warning as bot_751's, when only
+   bot_751 has an open position?"** — clarified, not a bug:
+   `render_warning_banner()` (`dashboard_view.py`) intentionally shows the
+   MOST RECENT `entry_scan` cycle's warnings, and that ONE cycle's Stage 1/2
+   fetch is SHARED across all 12 variants (the entire point of this
+   project's architecture — one fetch, not 12). Every variant's page
+   correctly shows the same shared-cycle data-quality status; it's not
+   variant-specific and was never meant to be.
+2. **"Scan is firing at :03/:08/:13...:58, not the configured :01/:06/:11...:56."**
+   Root-caused: the CRON TRIGGER genuinely still fires at :01/:06/:11...:56
+   exactly as designed (unchanged, still covered by `test_scheduler.py`) —
+   but `db.log_cycle()`'s `cycle_time` column is stamped with `_now()` called
+   FRESH at log-time, which is AFTER Stage 1+2 finish (real network I/O,
+   observed taking 2-4+ minutes this session) — not the trigger time. A
+   cycle triggered at :01 that takes ~2 min to fetch will genuinely LOG at
+   :03. Not a scheduling bug, a logging-semantics gap (`cycle_time` reads as
+   "when triggered" but actually means "when completed") — didn't change
+   this (would need to decide whether to log start time, completion time, or
+   both, and audit any other code relying on the current meaning; flagged
+   for a future pass, not fixed today).
+3. **Candle-fetch failures kept climbing (36/73) even with Angel One
+   fallback** — investigated by testing 3 of the "failed" symbols directly
+   against Angel One in isolation: all 3 succeeded immediately. This ruled
+   out "these symbols are broken" and pointed at `stage2_candles.py`'s
+   fallback pass itself: a plain SEQUENTIAL for-loop (unlike the primary
+   pass, which was already parallel). With Groww (primary) still degraded
+   from the earlier rate-limit finding, its entire ~70-symbol load was
+   cascading onto Angel One as fallback in one sequential burst — slow
+   enough (30-70+ symbols × Angel One's 0.4s/call rate limit, plus real
+   network latency) that some calls started failing under the sustained
+   burst that worked fine individually. **Fixed**: parallelized the fallback
+   pass with the same `ThreadPoolExecutor` + `CANDLE_WORKERS_PER_ACCOUNT`
+   pattern the primary pass already used — the fallback account's own
+   `AccountRateLimiter` still throttles correctly regardless of worker
+   count (that's its whole design). 1 new test simulating a 40-symbol bulk
+   cascade onto fallback, asserting correctness (right symbols succeed/fail,
+   no duplicate/missing fallback attempts) — didn't assert timing, that's
+   an integration-level claim to live-verify separately once Groww's rate
+   limit has actually cooled down.
+
+63/63 tests pass.

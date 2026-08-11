@@ -152,3 +152,37 @@ def test_stage2_falls_back_per_symbol_on_failure():
     assert list(result.candles_by_symbol["BBB"]["Close"]) == [9, 9, 9]
     assert "BBB" in fallback.candle_calls
     assert "AAA" not in fallback.candle_calls  # AAA succeeded on primary, no fallback needed
+
+
+def test_stage2_fallback_handles_a_large_burst_of_failures_correctly():
+    """2026-08-11 live finding: when the primary broker degrades, its ENTIRE
+    symbol load cascades onto the fallback in one burst — the fallback pass
+    used to be a plain sequential loop, which took long enough for a
+    30-70+-symbol burst that some calls started failing that worked fine in
+    isolation. Fixed by parallelizing the fallback pass (same
+    ThreadPoolExecutor pattern the primary pass already used). This test
+    doesn't assert timing (that's an integration-level concern, live-tested
+    separately) — it asserts CORRECTNESS holds at bulk scale: every failed
+    symbol still gets exactly one fallback attempt, and the right ones land
+    in the result vs. still_failed."""
+    symbols = [f"SYM{i}" for i in range(40)]
+
+    def primary_candle_fn(symbol, interval, period_days):
+        return None  # every symbol fails on primary — forces the full burst onto fallback
+
+    def fallback_candle_fn(symbol, interval, period_days):
+        # Every 5th symbol also fails on fallback, to verify still_failed tracking.
+        if int(symbol.replace("SYM", "")) % 5 == 0:
+            return None
+        return pd.DataFrame({"Close": [1, 2, 3]})
+
+    primary = FakeAccount("primary", candle_fn=primary_candle_fn)
+    fallback = FakeAccount("fallback", candle_fn=fallback_candle_fn)
+
+    result = fetch_candle_history(symbols, primary_accounts=[primary], fallback_accounts=[fallback])
+
+    expected_succeeded = {s for s in symbols if int(s.replace("SYM", "")) % 5 != 0}
+    assert set(result.candles_by_symbol.keys()) == expected_succeeded
+    assert sorted(fallback.candle_calls) == sorted(symbols)  # every failed symbol got exactly one fallback attempt
+    assert len(fallback.candle_calls) == len(symbols)  # no duplicate/missing attempts from the parallel workers
+    assert any("8/40" in w for w in result.warnings)  # 40/5 = 8 symbols still failed after fallback

@@ -92,18 +92,39 @@ def fetch_candle_history(symbols: list[str], interval: str = "5m", period_days: 
                 failed_symbols.append(symbol)
 
     if failed_symbols and fallback_accounts:
+        # Parallel across CANDLE_WORKERS_PER_ACCOUNT workers on the fallback
+        # account, same pattern as the primary pass above — was a plain
+        # sequential loop until 2026-08-11 live testing found it: when the
+        # PRIMARY broker degrades (rate-limited, etc.), its ENTIRE symbol
+        # load cascades onto the fallback in one burst. A sequential retry of
+        # 30-70+ symbols at the fallback account's own (typically slower,
+        # e.g. Angel One's 0.4s/call) rate limit took long enough that some
+        # calls started failing that succeeded fine when tested individually
+        # in isolation — a "thundering herd on the fallback path" symptom,
+        # not a problem with those specific symbols. Parallelizing shortens
+        # the burst's wall-clock duration; the fallback account's existing
+        # AccountRateLimiter still correctly throttles regardless of how
+        # many workers share it (that's its whole design, see rate_limiter.py).
         fallback_account = fallback_accounts[0]
+        fallback_workers = [fallback_account] * CANDLE_WORKERS_PER_ACCOUNT
         still_failed = []
-        for symbol in failed_symbols:
-            try:
-                df = fallback_account.fetch_candles(symbol, interval=interval, period_days=period_days)
-            except Exception as e:
-                logger.warning(f"Stage 2 fallback fetch for {symbol} raised: {e}")
-                df = None
-            if df is not None and not df.empty:
-                result.candles_by_symbol[symbol] = df
-            else:
-                still_failed.append(symbol)
+        with ThreadPoolExecutor(max_workers=len(fallback_workers)) as executor:
+            futures = {
+                executor.submit(_fetch_one, fallback_workers[i % len(fallback_workers)],
+                                 symbol, interval, period_days): symbol
+                for i, symbol in enumerate(failed_symbols)
+            }
+            for future in as_completed(futures):
+                symbol = futures[future]
+                try:
+                    df = future.result()
+                except Exception as e:
+                    logger.warning(f"Stage 2 fallback fetch for {symbol} raised: {e}")
+                    df = None
+                if df is not None and not df.empty:
+                    result.candles_by_symbol[symbol] = df
+                else:
+                    still_failed.append(symbol)
         if still_failed:
             result.warnings.append(
                 f"{len(still_failed)}/{len(symbols)} symbols had no candle data even after "

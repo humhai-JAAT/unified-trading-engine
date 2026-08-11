@@ -517,3 +517,35 @@ project's own rules.md.
   short-circuit the mocked-`get_access_token` test assertions once real
   cache files existed — switched to an isolated account_id + tmp_path.
   62/62 tests pass.
+- **Same session, immediately after — 3 more sharp user questions, 2
+  clarified as not-bugs, 1 real fix.** (1) Why bot_551's page shows the same
+  warning as bot_751's — by design, `render_warning_banner()` shows the
+  latest SHARED entry_scan cycle's status, and Stage 1/2 is one fetch for
+  all 12 variants, not per-variant. (2) Why the scan appears to fire at
+  :03/:08/:13 instead of the configured :01/:06/:11 — the cron trigger is
+  unchanged and correct; `db.log_cycle()`'s `cycle_time` is stamped at
+  COMPLETION (after Stage 1+2's real network I/O, 2-4+ min observed this
+  session), not at trigger time — a logging-semantics gap, not a scheduling
+  bug. Flagged for a future pass (log start time too?) rather than fixed
+  today — didn't want to touch `cycle_time`'s meaning without auditing
+  `prune_cycle_logs` and anything else that reads it. (3) A REAL bug:
+  candle-fetch failures kept climbing (36/73) even through Angel One
+  fallback — tested 3 "failed" symbols directly against Angel One in
+  isolation, all 3 succeeded immediately, ruling out "these symbols are
+  broken." Root cause: `stage2_candles.py`'s fallback pass was a plain
+  SEQUENTIAL loop (only the primary pass was ever parallelized) — with
+  Groww still degraded from the earlier rate-limit finding, its entire
+  ~70-symbol load cascaded onto Angel One as fallback in one sequential
+  burst, slow enough that some calls failed under sustained load that
+  worked fine individually — a "thundering herd on the fallback path"
+  symptom. Fixed by parallelizing the fallback pass with the same
+  `ThreadPoolExecutor` pattern the primary pass already used (the fallback
+  account's own rate limiter still throttles correctly regardless of
+  worker count — that's its whole design). 1 new test (40-symbol bulk
+  cascade, correctness only, not timing). 63/63 tests pass.
+  **Pattern still holding**: three findings in one exchange, three
+  different postures — explain when it's genuinely not a bug rather than
+  reflexively "fixing" something that isn't broken, root-cause with a
+  targeted isolated test before touching code, and only change behavior
+  where a concrete mechanism (sequential fallback under bulk load) was
+  actually identified, not just correlated.
