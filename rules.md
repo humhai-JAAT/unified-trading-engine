@@ -22,7 +22,7 @@ specific to this project's multi-broker-account design.
   venv, own repo, own DB. See `trading_projects_separation.md` in the private
   memory system, updated to include this project as the 5th sibling.
 - **Never reintroduce the old `vN`/`vN_M` naming convention** — this project uses
-  universe+timing+trailing-exit naming (`bot_751/subh30_trailing_ema`, etc.), a deliberate
+  universe+timing+trailing-exit naming (`bot_400/subh30_trailing_ema`, etc.), a deliberate
   break from the sibling bots. See Architecture.md's "Naming convention" section.
 - **Never let a shared-data fetch failure (Stage 1 or Stage 2) fail silently.**
   Partial data or a fallback-path trigger must surface as a visible dashboard

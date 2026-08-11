@@ -10,7 +10,7 @@ viewer's container; the database is the only thing both apps actually share
 looked like it worked from the admin side but silently never reached here).
 NO variant selector here — visitors can't pick their own, that choice is
 admin-controlled only (2026-08-10, per the user: viewer picking any of the
-12 variants itself was never the intent). No other controls either — no
+8 variants itself was never the intent). No other controls either — no
 Start/Stop, no Settings, no Reset, no Force Exit, no cycle log. Deploy as its
 OWN separate Streamlit Cloud app (same repo, main file path "viewer_app.py"
 instead of "app.py") so this link can be shared without exposing controls.

@@ -32,7 +32,7 @@ def test_filter_reports_missing_symbols_not_silently():
     # Universe expects AAA and BBB, but BBB never made it into the shared rank_list —
     # simulates the index-CSV cache-timing mismatch scenario from Architecture.md.
     with patch("engine.nse_universe.get_universe_symbols", return_value={"AAA", "BBB"}):
-        top, missing = filter_to_universe(rank_list, "total_market_minus_200", top_n=50)
+        top, missing = filter_to_universe(rank_list, "n500_minus_200", top_n=50)
 
     assert missing == ["BBB"]
     assert list(top["symbol"]) == ["AAA"]  # doesn't crash, just proceeds with what it has
@@ -40,7 +40,7 @@ def test_filter_reports_missing_symbols_not_silently():
 
 def test_filter_handles_empty_rank_list():
     with patch("engine.nse_universe.get_universe_symbols", return_value={"AAA", "BBB"}):
-        top, missing = filter_to_universe(_rank_list([]), "total_market", top_n=50)
+        top, missing = filter_to_universe(_rank_list([]), "n500_minus_100", top_n=50)
 
     assert top.empty
     assert sorted(missing) == ["AAA", "BBB"]

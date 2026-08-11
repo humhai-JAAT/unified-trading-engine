@@ -1,10 +1,11 @@
 """Stage 1 — ranking data layer. See Architecture.md's "Stage 1 — ranking data
 layer" for the full design this implements.
 
-Fetches today's %-change for every stock in bot_751's universe (the biggest,
-superset universe) exactly ONCE per cycle, split across parallel workers on
-multiple broker accounts, then lets all 3 universe-bots derive their own
-top-N from this ONE shared result — no per-universe API calls.
+Fetches today's %-change for every stock in bot_400's universe (the biggest,
+superset universe — Nifty500 minus Nifty100) exactly ONCE per cycle, split
+across parallel workers on multiple broker accounts, then lets both
+universe-bots derive their own top-N from this ONE shared result — no
+per-universe API calls.
 """
 
 import time

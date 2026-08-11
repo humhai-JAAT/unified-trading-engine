@@ -3,7 +3,7 @@ VARIANTS structure — see Architecture.md and PRD.md for the full design.
 
 New naming convention (breaking change from the sibling bots' `v1`/`v2_3_2`-style
 keys) — never reintroduce those here. Every variant is identified by
-`{universe_bot}/{variant_key}`, e.g. `bot_751/subh30_trailing_ema`.
+`{universe_bot}/{variant_key}`, e.g. `bot_400/subh30_trailing_ema`.
 """
 
 import yaml
@@ -12,14 +12,16 @@ from common.helpers import PROJECT_ROOT
 
 SETTINGS_PATH = PROJECT_ROOT / "config" / "settings.yaml"
 
-# 3 universe-bots. `bot_551` and `bot_400` are ALWAYS constructed as subsets of
-# `bot_751`'s universe (see engine.nse_universe.get_universe_symbols) — this is
-# what makes Stage 1's shared-ranking-fetch valid. Don't add a 4th universe-bot
-# whose symbol set isn't provably a subset of `bot_751` without revisiting
-# Stage 1's design (see Architecture.md).
+# 2 universe-bots, both defined relative to Nifty500 (not Total Market — that
+# universe was dropped 2026-08-11 to cut Stage 1's fetch size). `bot_300` is
+# ALWAYS a subset of `bot_400`'s universe (see
+# engine.nse_universe.get_universe_symbols: Nifty500-Nifty200 ⊂
+# Nifty500-Nifty100) — this is what makes Stage 1's shared-ranking-fetch valid
+# (fetch bot_400's 400 symbols once, bot_300 filters its 300 from that same
+# list). Don't add a 3rd universe-bot whose symbol set isn't provably a subset
+# of bot_400's without revisiting Stage 1's design (see Architecture.md).
 UNIVERSE_BOTS = [
-    {"key": "bot_751", "label": "Bot 751 - Nifty Total Market", "universe": "total_market"},
-    {"key": "bot_551", "label": "Bot 551 - Total Market minus Nifty200", "universe": "total_market_minus_200"},
+    {"key": "bot_300", "label": "Bot 300 - Nifty500 minus Nifty200", "universe": "n500_minus_200"},
     {"key": "bot_400", "label": "Bot 400 - Nifty500 minus Nifty100", "universe": "n500_minus_100"},
 ]
 UNIVERSE_BOTS_BY_KEY = {b["key"]: b for b in UNIVERSE_BOTS}
@@ -39,7 +41,7 @@ VARIANTS_BY_KEY = {v["key"]: v for v in VARIANTS}
 
 
 def all_variant_ids() -> list[str]:
-    """Every `{universe_bot}/{variant_key}` combination — 3 x 4 = 12."""
+    """Every `{universe_bot}/{variant_key}` combination — 2 x 4 = 8."""
     return [f"{b['key']}/{v['key']}" for b in UNIVERSE_BOTS for v in VARIANTS]
 
 
@@ -51,7 +53,7 @@ SUBH30_CHECKPOINTS = ["09:20", "09:25", "09:30"]
 SUBH30_CHECKPOINT_GRACE_MINUTES = 10  # a missed checkpoint is skipped, not fired late
 
 DEFAULTS = {
-    "starting_capital": 10000,       # per variant (12 independent pools)
+    "starting_capital": 10000,       # per variant (8 independent pools)
     "leverage_multiplier": 1.0,
     "profit_target_pct": 3.0,        # trailing-activation trigger, not a final exit
     "stop_loss_pct": 1.5,

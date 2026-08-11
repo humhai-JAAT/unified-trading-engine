@@ -1,5 +1,5 @@
 """Synthetic end-to-end test: Stage 1 -> per-universe filter -> Stage 2 ->
-all 12 variants' entry scan, fully mocked (no real broker/DB network calls
+all 8 variants' entry scan, fully mocked (no real broker/DB network calls
 except a throwaway local SQLite file) — mirrors the sibling bots' own
 "synthetic end-to-end engine test" verification pattern before ever touching a
 live account.
@@ -97,9 +97,9 @@ def test_full_scan_cycle_enters_the_breakout_symbol_for_every_universe_bot(wired
 
     # subh30 variants are gated to the 09:20 checkpoint at 09:21 (fixed_now) —
     # puradin variants scan every cycle regardless. Both entry-timings should
-    # find BREAKOUT and enter, for all 3 universe-bots (12 variants total).
+    # find BREAKOUT and enter, for both universe-bots (8 variants total).
     entered = result["entered_variants"]
-    assert len(entered) == 12, f"expected all 12 variants to enter, got: {entered}"
+    assert len(entered) == 8, f"expected all 8 variants to enter, got: {entered}"
     for variant_id in entered:
         assert result["scan"][variant_id]["entered"]["symbol"] == "BREAKOUT"
 

@@ -16,69 +16,66 @@ Streamlit Cloud app process (admin app; separate viewer app deployment planned)
         │
         ├── STAGE 2 — candle history (see below)
         │
-        └── for each of 12 variants (3 universe-bots × 4 entry/exit combos):
+        └── for each of 8 variants (2 universe-bots × 4 entry/exit combos):
                 run its own independent strategy-check + position management,
                 reading Stage 1/2's shared data — no per-variant re-fetching
 ```
 
 ## Stage 1 — ranking data layer
 
-**Goal:** know today's %-change for every stock in the biggest universe (Total
-Market, ~751 stocks) exactly once per cycle, then let all 3 universe-bots derive
-their own top-50 from it without any further API calls.
+**Goal:** know today's %-change for every stock in the biggest universe
+(`bot_400` = Nifty500 minus Nifty100, ~400 stocks) exactly once per cycle,
+then let both universe-bots derive their own top-50 from it without any
+further API calls. **Redefined 2026-08-11** (was Total Market, ~751 stocks —
+see PRD.md for the trade-off this cut accepted).
 
 ```
-751 stocks split into 6 chunks (~125 each)
+~400 stocks split into chunks
         │
         ▼
-6 parallel workers, split across 2 broker accounts (e.g. 2 Groww accounts):
-  Account A: worker 1, 2, 3 — share ONE lock + rate-limit timer (this account's own)
-  Account B: worker 4, 5, 6 — share a DIFFERENT lock + rate-limit timer
-  (the two accounts run fully independently of each other — no shared state,
-   no forced wave-synchronization between them; each proceeds at its own pace)
+3 parallel workers (WORKERS_PER_ACCOUNT) on the primary broker account
+(Groww) — share ONE lock + rate-limit timer (see AccountRateLimiter below)
         │
         ▼
 Merge + sort as chunks arrive (streaming merge, for efficiency) —
         │  BUT: the "final rank list" is only marked ready for downstream use
-        │  once ALL 6 chunks have arrived, either normally or via fallback below.
+        │  once ALL chunks have arrived, either normally or via fallback below.
         ▼
-Final rank list (all ~751 stocks, ranked by % change)
+Final rank list (all ~400 stocks, ranked by % change)
         │
         ▼ (in-memory, shared read-only for the rest of this cycle)
 Temp space — ranking data
         │
-        ├─▶ bot_751 filters: take top-50 directly
-        ├─▶ bot_551 filters: keep only symbols in the (Total Market − Nifty200)
-        │       constituent set, then take top-50 of what's left
-        └─▶ bot_400 filters: keep only symbols in the (Nifty500 − Nifty100)
+        ├─▶ bot_400 filters: take top-50 directly
+        └─▶ bot_300 filters: keep only symbols in the (Nifty500 − Nifty200)
                 constituent set, then take top-50 of what's left
 ```
 
-**Fallback (chunk-level, not whole-list):** if any one of the 6 chunk-fetches
-fails, ONLY that chunk is retried via the fallback broker (Angel One) — the other
-5 successful chunks are never re-fetched. If the fallback also fails, the cycle
+**Fallback (chunk-level, not whole-list):** if any one chunk-fetch fails, ONLY
+that chunk is retried via the fallback broker (Angel One) — the other
+successful chunks are never re-fetched. If the fallback also fails, the cycle
 proceeds with a smaller rank list and an explicit warning is logged and shown on
 the dashboard (see "Error visibility" below) — it must never silently look like a
 complete, healthy list.
 
-**Subset-safety check:** `bot_551`/`bot_400`'s constituent lists (from
-niftyindices.com CSVs, cached independently per index, 7-day TTL) are assumed to
-always be subsets of `bot_751`'s. Because the 4 underlying index CSVs
-(nifty100/200/500/totalmarket) can refresh at slightly different times, a rare
-index-rebalance day could momentarily break that assumption. If a
-`bot_551`/`bot_400` constituent symbol isn't found in Stage 1's fetched rank list,
-log a warning rather than silently dropping it or crashing.
+**Subset-safety check:** `bot_300`'s constituent list (from niftyindices.com
+CSVs, cached independently per index, 7-day TTL) is assumed to always be a
+subset of `bot_400`'s. Because the 3 underlying index CSVs (nifty100/200/500)
+can refresh at slightly different times, a rare index-rebalance day could
+momentarily break that assumption. If a `bot_300` constituent symbol isn't
+found in Stage 1's fetched rank list, log a warning rather than silently
+dropping it or crashing.
 
 ## Stage 2 — candle history layer
 
 **Goal:** fetch the 5-min OHLCV history needed for EMA9/EMA30/EMA100/MACD
 calculation exactly once per unique symbol per cycle, no matter how many of the
-12 variants need it.
+8 variants need it.
 
 ```
-bot_751 top-50  ┐
-bot_551 top-50  ├──▶ MERGE + DEDUPLICATE ──▶ unique symbol set (typically ~100-150,
-bot_400 top-50  ┘                             far fewer than 3×50=150 due to overlap)
+bot_300 top-50  ┐
+bot_400 top-50  ┴──▶ MERGE + DEDUPLICATE ──▶ unique symbol set (typically ~70-90,
+                                              fewer than 2×50=100 due to overlap)
                                                         │
                                                         ▼
                         Parallel fetch, same per-account lock pattern as Stage 1
@@ -92,7 +89,7 @@ bot_400 top-50  ┘                             far fewer than 3×50=150 due to 
                         read-only for the rest of this cycle)
                                                         │
                         ▼ each variant reads only the symbols in its own universe-
-                          bot's top-50 — 3 universe-bots × 4 variants each = 12
+                          bot's top-50 — 2 universe-bots × 4 variants each = 8
                           independent strategy-checks, zero redundant fetching
 ```
 
@@ -126,7 +123,7 @@ engine.scheduler.start_scheduler()
         └──▶ engine.live_feed background thread (NEW, daemon)        ├─▶ locked_decide_and_exit()
              persistent GrowwFeed connection, polls get_all_feed()   │      (SAME function, both paths)
              every ~2s, subscribed ONLY to open positions' symbols ──┘      db.acquire_trade_lock()
-             (at most 12, not 751 — no batch-limit concern here)           re-checks trade still open
+             (at most 8, not 400 — no batch-limit concern here)            re-checks trade still open
 ```
 
 Both the REST path (`manage_open_position`, per-1-min-candle since entry) and
@@ -163,8 +160,8 @@ careful handling and Stage 1 isn't the latency-sensitive path today (see
 
 **Finalized 2026-08-08** (superseding the original 2+2 plan below): **1 Groww
 account (primary) + 1 Angel One account (fallback)**. Reasoning — total
-per-cycle load is ~751 quote-fetches (Stage 1, batched 50/call = 16 requests)
-+ ~100-150 candle-fetches (Stage 2, 1 symbol/call), ≈170 requests/cycle. A
+per-cycle load is ~400 quote-fetches (Stage 1, batched 50/call = 8 requests)
++ ~70-90 candle-fetches (Stage 2, 1 symbol/call), ≈80-100 requests/cycle. A
 single Groww account's ~25 req/s rate clears this in a few seconds, well
 inside the multi-minute checkpoint window — a 2nd Groww account would only
 help if that specific account failed (key revoked, suspended), not for raw
@@ -235,14 +232,14 @@ class AccountRateLimiter:
   the dashboard — not just logged. This directly addresses a class of bug found
   during this project's own design review: a partial/incomplete shared dataset
   could otherwise silently produce a wrong or incomplete top-50/candle-set for
-  all 12 variants without anyone noticing.
+  all 8 variants without anyone noticing.
 
 ## Naming convention (breaking change from v1/v2)
 
 No more `v1`/`v2`/`v1_1`/`v2_3_2`-style version-number keys. Variants are now
 named by **universe + entry-timing + trailing-exit mechanism** (there is no
 "fixed exit" variant — see PRD.md's note on this):
-`bot_751/subh30_trailing_ema`, `bot_551/puradin_trailing_atr`,
+`bot_300/subh30_trailing_ema`, `bot_300/puradin_trailing_atr`,
 `bot_400/subh30_trailing_atr`, etc. (4 timing/exit combos per universe-bot —
 see PRD.md's variant table). Database tables, config keys, and dashboard labels
 should all follow this convention consistently — do not reintroduce the old
@@ -294,9 +291,9 @@ engine/
   variant_engine.py            Per-variant entry-timing (subh30 checkpoint-style /
                                  puradin continuous) + trailing-exit mechanism
                                  (EMA9-close-below / ATR-pullback) logic, run
-                                 once per of the 12 variants
+                                 once per of the 8 variants
   nse_universe.py               Index-constituent CSV fetch (niftyindices.com),
-                                 subset derivation (751/551/400)
+                                 subset derivation (bot_300/bot_400, Nifty500-based)
   dashboard_view.py              Shared rendering, per universe-bot / per variant
 common/
   helpers.py, indicators.py, metrics.py   Duplicated from the sibling bots, not

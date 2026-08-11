@@ -14,7 +14,7 @@ Architecture.md/design.md, not cosmetic additions:
 
 render_variant_panel() renders ONE variant's full panel (metrics/open-position/
 equity/trade-log), full width — the calling script picks universe-bot + variant
-via a 2-level sidebar selector (12 variants is too many for bot-v3's flat
+via a 2-level sidebar selector (8 variants is too many for bot-v3's flat
 st.columns(2)/radio pattern — see design.md) and calls this once per rerun.
 """
 
@@ -290,8 +290,8 @@ def render_variant_panel(universe_bot_key: str, variant_cfg: dict, settings: dic
 
 
 def get_refresh_interval():
-    """15s while ANY of the 12 variants has an open position, so live P&L is
-    visible without a manual refresh; None (no auto-refresh) while all 12 are
+    """15s while ANY of the 8 variants has an open position, so live P&L is
+    visible without a manual refresh; None (no auto-refresh) while all 8 are
     flat. The scheduler keeps managing/scanning on its own cadence regardless
     of what's showing on screen."""
     for universe_bot in config.UNIVERSE_BOTS:

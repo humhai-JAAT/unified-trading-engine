@@ -1,10 +1,10 @@
 """Unified Trading Engine — Streamlit dashboard (admin, full controls).
 
-3 universe-bots (bot_751/bot_551/bot_400) x 4 variants each (subh30/puradin
-entry-timing x ema/atr trailing-exit) = 12 total, all scanning/trading
+2 universe-bots (bot_300/bot_400) x 4 variants each (subh30/puradin
+entry-timing x ema/atr trailing-exit) = 8 total, all scanning/trading
 independently in the background every cycle regardless of what's on screen —
 see Architecture.md. A 2-level sidebar selector (universe-bot, then variant)
-picks which ONE is shown in the main panel at a time — 12 is too many to lay
+picks which ONE is shown in the main panel at a time — 8 is too many to lay
 out flat (see design.md).
 """
 
@@ -46,8 +46,8 @@ settings = config.load_settings()
 
 st.title("🧩 Unified Trading Engine")
 st.caption(
-    "3 universe-bots (Total Market / minus-Nifty200 / Nifty500-minus-Nifty100) x 4 variants each "
-    "(Subh-30-min or Pura-din entry timing x EMA9 or ATR trailing exit) = 12 independent paper-trading "
+    "2 universe-bots (Nifty500-minus-Nifty200 / Nifty500-minus-Nifty100) x 4 variants each "
+    "(Subh-30-min or Pura-din entry timing x EMA9 or ATR trailing exit) = 8 independent paper-trading "
     "strategies, sharing one deduplicated ranking + candle-data fetch per cycle instead of each "
     "re-fetching from scratch — see Architecture.md."
 )
@@ -68,7 +68,7 @@ if col_b.button("Stop", use_container_width=True, disabled=not running):
 
 st.sidebar.caption(
     f"Position management every {settings['position_management_interval_minutes']} min · "
-    f"entry scan (Stage 1 + Stage 2 + all 12 variants) at 5-min-boundary+1 offsets "
+    f"entry scan (Stage 1 + Stage 2 + all 8 variants) at 5-min-boundary+1 offsets "
     f"(09:21, 09:26, 09:31...) · awake only {settings['wake_time']}–{settings['sleep_time']} IST."
 )
 
@@ -106,7 +106,7 @@ variant_key = st.sidebar.radio(
     format_func=lambda k: k.replace("_", " "),
 )
 variant_cfg = config.VARIANTS_BY_KEY[variant_key]
-st.sidebar.caption("All 12 keep scanning/trading independently regardless of which one you're viewing.")
+st.sidebar.caption("All 8 keep scanning/trading independently regardless of which one you're viewing.")
 
 st.sidebar.divider()
 st.sidebar.markdown("### 🌐 Public Viewer")
@@ -160,7 +160,7 @@ with st.sidebar.expander("⚙️ Strategy Settings", expanded=False):
 
 st.sidebar.divider()
 with st.sidebar.expander("🗑️ Danger Zone", expanded=False):
-    st.caption("Permanently deletes ALL trades and cycle logs for ALL 12 variants. Cannot be undone.")
+    st.caption("Permanently deletes ALL trades and cycle logs for ALL 8 variants. Cannot be undone.")
     confirm_reset = st.checkbox("I understand this deletes everything", key="confirm_reset")
     if st.button("Reset All Data", type="secondary", disabled=not confirm_reset, use_container_width=True):
         db.reset_all_data()

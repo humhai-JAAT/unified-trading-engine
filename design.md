@@ -56,7 +56,7 @@ actually build a real design system — triggered by the user's explicit
 request (2026-08-04) to design the UI properly using Figma, not a
 retroactive decision made without being asked. Plus 3 functional differences:
 
-- **12 variants across 3 universe-bots, not up to 6 in one flat list** — built
+- **8 variants across 2 universe-bots, not up to 6 in one flat list** — built
   as a 2-level sidebar selector (universe-bot dropdown, then a 4-way variant
   radio within it), not bot-v3's `st.columns(2)` pattern, which wouldn't scale
   past ~2-3 variants shown side by side. Live-verified: switching either level
@@ -78,7 +78,7 @@ retroactive decision made without being asked. Plus 3 functional differences:
 
 ## Not yet decided
 
-- Whether the viewer (read-only) app shows all 12 variants or a curated
+- Whether the viewer (read-only) app shows all 8 variants or a curated
   subset (the sibling bots' `public_variant` setting pattern may carry over)
   — currently the viewer exposes the same full 2-level selector as admin.
 - `danger` token (`#EF4444`) is defined but not yet wired into a specific

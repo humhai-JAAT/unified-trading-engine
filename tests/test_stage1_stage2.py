@@ -112,13 +112,12 @@ def test_stage1_reports_warning_when_fallback_also_fails():
 
 def test_merge_unique_symbols_dedupes_across_universes():
     top_lists = {
-        "bot_751": pd.DataFrame({"symbol": ["AAA", "BBB", "CCC"]}),
-        "bot_551": pd.DataFrame({"symbol": ["BBB", "CCC", "DDD"]}),  # BBB/CCC overlap
-        "bot_400": pd.DataFrame({"symbol": ["EEE"]}),
+        "bot_300": pd.DataFrame({"symbol": ["BBB", "CCC", "DDD"]}),  # BBB/CCC overlap
+        "bot_400": pd.DataFrame({"symbol": ["AAA", "BBB", "CCC"]}),
     }
     unique = merge_unique_symbols(top_lists)
-    assert sorted(unique) == ["AAA", "BBB", "CCC", "DDD", "EEE"]
-    assert len(unique) == 5  # not 3+3+1=7 — overlap was deduped
+    assert sorted(unique) == ["AAA", "BBB", "CCC", "DDD"]
+    assert len(unique) == 4  # not 3+3=6 — overlap was deduped
 
 
 def test_stage2_fetches_each_unique_symbol_exactly_once():

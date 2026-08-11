@@ -27,17 +27,25 @@ principle: **fetch each unique piece of data exactly once per cycle, then share
 it (read-only) across every variant that needs it** — regardless of how many
 universes or entry/exit combinations exist.
 
-## Core structure: 3 universe-bots × 4 variants = 12 total
+## Core structure: 2 universe-bots × 4 variants = 8 total
+
+**Redefined 2026-08-11** (was 3 universe-bots/12 total, relative to Nifty
+Total Market) — both universes are now defined relative to **Nifty 500**
+instead, cutting Stage 1's fetch from ~751 to ~400 symbols (46.8% reduction).
+Trade-off: this permanently drops Nifty 100 (largest caps) and Total-Market
+ranks 501-751 (smallest/most speculative) from the tradeable universe — the
+strategy now trades only the Nifty 500 101-500 mid-cap band. Decided and
+implemented same session; production trade/cycle-log history was fully reset
+as part of the change (not migrated).
 
 | Universe-bot | Stock universe | Approx size |
 |---|---|---|
-| `bot_751` | Nifty Total Market (broadest — NSE's closest thing to a "Nifty 1000") | ~751 |
-| `bot_551` | Total Market minus Nifty 200 | ~551 |
+| `bot_300` | Nifty 500 minus Nifty 200 | ~300 |
 | `bot_400` | Nifty 500 minus Nifty 100 | ~400 |
 
-`bot_551` and `bot_400` are constructed as, and always remain, **subsets of
-`bot_751`'s universe** (set-difference from the same index-constituent lists) —
-this is what makes sharing one ranking-data fetch across all three possible.
+`bot_300` is constructed as, and always remains, a **subset of `bot_400`'s
+universe** (set-difference from the same index-constituent lists) — this is
+what makes sharing one ranking-data fetch across both possible.
 
 **There is no standalone "fixed exit" variant.** Every variant's stop-loss is a
 fixed %, and its target is also a fixed % — but reaching that target does NOT
@@ -55,29 +63,29 @@ Each universe-bot runs **4 variants** (entry-timing × trailing-exit style):
 | `puradin_trailing_ema` | Pura din (continuous all-day scanning — v2's model) | Fixed SL; once fixed target % is first reached, flips to EMA9-close-below trailing |
 | `puradin_trailing_atr` | Pura din | Fixed SL; once fixed target % is first reached, flips to ATR-pullback trailing |
 
-12 variants total (3 universe-bots × 4), one process, one database, one
-dashboard — not 12 separate deployments.
+8 variants total (2 universe-bots × 4), one process, one database, one
+dashboard — not 8 separate deployments.
 
 ## The 2-stage shared data pipeline
 
 **Stage 1 — ranking data (which stocks are today's gainers):**
-Fetch today's %-change for all ~751 Total Market stocks ONCE per cycle, split
-across 6 parallel workers (across multiple broker accounts — see Architecture.md),
-merge + sort into one ranked list. All 3 universe-bots derive their own top-50 by
-filtering this ONE shared list down to their own subset — no per-universe API
-calls.
+Fetch today's %-change for all ~400 `bot_400`-universe stocks ONCE per cycle,
+split across parallel workers (across multiple broker accounts — see
+Architecture.md), merge + sort into one ranked list. Both universe-bots
+derive their own top-50 by filtering this ONE shared list down to their own
+subset — no per-universe API calls.
 
 **Stage 2 — candle history (for the actual EMA/MACD signal check):**
-Merge the 3 universe-bots' top-50 lists, remove duplicate symbols, fetch 5-min
+Merge both universe-bots' top-50 lists, remove duplicate symbols, fetch 5-min
 candle history ONLY for that deduplicated set (parallel, same multi-account
-pattern), share the result across whichever of the 12 variants need each symbol.
+pattern), share the result across whichever of the 8 variants need each symbol.
 
 Full data flow: see Architecture.md.
 
 ## Who this is for
 
-A single retail trader (the project owner) forward-testing 12 strategy-variant
-combinations (3 universes × 2 entry-timings × 2 trailing-exit mechanisms)
+A single retail trader (the project owner) forward-testing 8 strategy-variant
+combinations (2 universes × 2 entry-timings × 2 trailing-exit mechanisms)
 against live NSE price action simultaneously, risk-free, to see which universe/
 timing/exit combination performs best — before ever considering real capital.
 

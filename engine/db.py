@@ -31,7 +31,7 @@ def _now() -> datetime:
 
 
 def _variant_to_table_suffix(variant_id: str) -> str:
-    """'bot_751/subh30_trailing_ema' -> 'bot_751__subh30_trailing_ema' — SQL table
+    """'bot_400/subh30_trailing_ema' -> 'bot_400__subh30_trailing_ema' — SQL table
     names can't contain '/', so the display/dict-key format uses '/' but table
     names use '__'. Only ever called on our own fixed config values (see
     VARIANT_TABLES below), never on external input."""

@@ -549,3 +549,67 @@ project's own rules.md.
   targeted isolated test before touching code, and only change behavior
   where a concrete mechanism (sequential fallback under bulk load) was
   actually identified, not just correlated.
+
+## 2026-08-11 — Universe redefinition implemented: 3 universe-bots (751/551/400) → 2 (300/400)
+
+The Nifty500-based universe redefinition left open at the end of the previous
+session (see the "OPEN, UNRESOLVED" note further up) was picked back up and
+implemented same day, on explicit user instruction ("implement it"). Final
+structure: **`bot_300`** (Nifty500 − Nifty200, ~300 stocks) replaces `bot_551`;
+**`bot_400`** (Nifty500 − Nifty100, ~400 stocks) keeps its exact prior
+definition and table names unchanged; **`bot_751`** (Total Market, ~751) is
+dropped entirely. `all_variant_ids()` now produces **8** ids (2×4), not 12.
+Stage 1's shared fetch moved from `get_universe_symbols("total_market")` (751)
+to `get_universe_symbols("n500_minus_100")` (400, `bot_400`'s own universe,
+still a strict superset of `bot_300`'s) — a 46.8% cut, matching the number
+worked out in the prior session's discussion.
+
+**User's framing of the open POLICYBZR position**: "bot will be restart...
+soo, all the data must be cleaned" — read as a full production reset, not a
+migration. At the time of this change there was a real open POLICYBZR
+position under `bot_751`'s 2 puradin variants (entered earlier today,
+2026-08-11) — it was NOT squared off or preserved, just wiped along with
+everything else. This is a paper-trading bot (zero real capital), so a clean
+restart was judged the simplest correct choice over writing one-off migration
+code for a universe (`bot_551`→`bot_300`) that isn't even the same symbol set
+(Total-Market-minus-200 vs. Nifty500-minus-200 share no clean 1:1
+correspondence — there was nothing meaningful to migrate anyway).
+
+**Code changes**: `engine/config.py` (`UNIVERSE_BOTS` shrunk to 2 entries),
+`engine/nse_universe.py` (`get_universe_symbols` gained an `n500_minus_200`
+branch, lost `total_market`/`total_market_minus_200`; `niftytotalmarket`
+dropped from `_INDEX_URLS` entirely — nothing fetches Total Market data
+anymore), `engine/scheduler.py` (Stage 1's fetch call point). `engine/db.py`
+needed **zero code changes** — `VARIANT_TABLES` is fully derived from
+`config.all_variant_ids()`, so it automatically produced
+`ute_trades_bot_300__*` and kept `ute_trades_bot_400__*` unchanged once
+`config.py` was edited; the now-orphaned `ute_trades_bot_751__*` (4) and
+`ute_trades_bot_551__*` (4) tables were handled by the production reset
+below, not by app code. Dashboard sidebar/selector logic in `app.py`/
+`viewer_app.py`/`dashboard_view.py` was likewise already fully derived from
+`config.UNIVERSE_BOTS` — only hardcoded prose/captions/docstrings needed
+manual text edits (3→2 universe-bots, 12→8 variants). All 6 test files that
+referenced `bot_751`/`bot_551`/`total_market` were updated (see Phase.md for
+the exact list) — 63/63 tests still pass (see this file's own running count).
+
+**Production Supabase reset** (per "all data must be cleaned"): dropped the 8
+orphaned `ute_trades_bot_{751,551}__*` tables, truncated the 4 surviving
+`ute_trades_bot_400__*` tables, truncated `ute_cycle_log`/`ute_checkpoint_log`,
+and reset the `ute_settings` `public_variant` row back to `""` (it was
+pointing at a `bot_751` variant, which no longer exists). `init_db()` created
+the 4 new empty `ute_trades_bot_300__*` tables automatically on next run — no
+manual table creation needed for those. This was the **first time** this
+project had to handle a universe-bot rename/removal — no migration tooling
+existed before this (confirmed via a full-codebase search), and per the
+user's "clean restart" framing, none was built now either; a genuine
+migration path (rename + copy, not drop + fresh-create) would need to be
+written from scratch if a future universe change ever needs to preserve
+history instead of resetting it.
+
+**Not done / didn't push**: per this project's own rules.md ("ask before
+committing") and the user's standing "ask before editing/implementing"
+preference, code changes were made and tested locally but NOT committed or
+pushed without a separate explicit go-ahead — see this session's own
+end-of-turn note for whether that happened. Reminder for whoever pushes:
+Streamlit Cloud auto-redeploys `app.py` on push to `main`, which resets the
+in-process APScheduler — click "Start" in the admin sidebar again afterward.

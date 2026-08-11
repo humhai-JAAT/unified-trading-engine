@@ -572,3 +572,36 @@ warning banner and cycle timing:**
    limit has actually cooled down.
 
 63/63 tests pass.
+
+**Same day, immediately after — the open universe-redefinition decision from
+earlier was resolved and implemented.** User said "implement it" for the
+Nifty500-based redefinition, then framed the open POLICYBZR position (real
+open trade under `bot_751`, entered earlier today) as: "bot will be
+restart... soo, all the data must be cleaned" — a full production reset, not
+a migration. Implemented: `UNIVERSE_BOTS` shrunk from 3 (`bot_751`/`bot_551`/
+`bot_400`) to 2 (`bot_300` = Nifty500−Nifty200 ~300, replacing `bot_551`;
+`bot_400` = Nifty500−Nifty100 ~400, unchanged) — `all_variant_ids()` now
+returns 8, not 12. Stage 1's shared fetch switched from `total_market` (751)
+to `n500_minus_100` (400, `bot_400`'s own universe) — a 46.8% cut. Code
+changes: `engine/config.py`, `engine/nse_universe.py` (new `n500_minus_200`
+branch, `niftytotalmarket` dropped from `_INDEX_URLS`), `engine/scheduler.py`
+(Stage 1 fetch call). `engine/db.py` needed no code change —
+`VARIANT_TABLES` auto-derives from `all_variant_ids()`. Dashboard selector
+logic in `app.py`/`viewer_app.py`/`dashboard_view.py` was already fully
+derived from `config.UNIVERSE_BOTS`; only hardcoded prose needed manual
+updates. Updated all 6 test files referencing the old universe-bot keys
+(`test_nse_universe.py`, `test_db_and_config.py`, `test_stage1_stage2.py`,
+`test_manage_open_position.py`, `test_live_feed.py`) and docs
+(`Architecture.md`, `PRD.md`, `design.md`, `rules.md`).
+
+**Production Supabase reset**: dropped the 8 now-orphaned
+`ute_trades_bot_{751,551}__*` tables, truncated the 4 surviving
+`ute_trades_bot_400__*` tables (including today's real trade history),
+truncated `ute_cycle_log`/`ute_checkpoint_log`, reset `ute_settings`'s
+`public_variant` row to `""`. First time this project handled a universe-bot
+removal — no rename/migration tooling existed (confirmed via full-codebase
+search) and none was built, since the user's framing was an explicit clean
+restart, not a preserve-history migration.
+
+Not committed/pushed without a separate explicit go-ahead, per this
+project's own "ask before committing" rule.

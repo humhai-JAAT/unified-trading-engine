@@ -35,7 +35,7 @@ def test_start_is_a_noop_when_no_groww_account_configured(mock_accounts):
 
 def test_all_open_trades_aggregates_across_all_12_variants():
     def fake_get_open_trade(variant_id):
-        if variant_id == "bot_751/subh30_trailing_ema":
+        if variant_id == "bot_300/subh30_trailing_ema":
             return {"id": 1, "symbol": "RELIANCE"}
         if variant_id == "bot_400/puradin_trailing_atr":
             return {"id": 2, "symbol": "TCS"}
@@ -45,7 +45,7 @@ def test_all_open_trades_aggregates_across_all_12_variants():
         open_trades = live_feed._all_open_trades()
 
     assert open_trades == {
-        "bot_751/subh30_trailing_ema": {"id": 1, "symbol": "RELIANCE"},
+        "bot_300/subh30_trailing_ema": {"id": 1, "symbol": "RELIANCE"},
         "bot_400/puradin_trailing_atr": {"id": 2, "symbol": "TCS"},
     }
 
@@ -85,7 +85,7 @@ def test_sync_subscriptions_only_diffs_the_delta():
 
     # New wanted set: RELIANCE (unchanged) + INFY (new) — TCS position closed.
     open_trades = {
-        "bot_751/subh30_trailing_ema": {"symbol": "RELIANCE"},
+        "bot_300/subh30_trailing_ema": {"symbol": "RELIANCE"},
         "bot_400/puradin_trailing_atr": {"symbol": "INFY"},
     }
     live_feed._sync_subscriptions(account, feed, open_trades)
@@ -102,7 +102,7 @@ def test_sync_subscriptions_skips_symbol_with_no_known_token():
     live_feed._subscribed_tokens = {}
 
     open_trades = {
-        "bot_751/subh30_trailing_ema": {"symbol": "RELIANCE"},
+        "bot_300/subh30_trailing_ema": {"symbol": "RELIANCE"},
         "bot_400/puradin_trailing_atr": {"symbol": "UNKNOWNSYM"},
     }
     live_feed._sync_subscriptions(account, feed, open_trades)
@@ -120,7 +120,7 @@ def test_check_tick_builds_single_row_ohlc_candle_from_the_ltp(mock_decide):
                 "atr_period": 14, "atr_multiplier": 1.5}
     now = IST.localize(datetime(2026, 8, 10, 11, 0))
 
-    live_feed._check_tick("bot_751/subh30_trailing_ema", {"key": "subh30_trailing_ema", "exit_style": "ema"},
+    live_feed._check_tick("bot_300/subh30_trailing_ema", {"key": "subh30_trailing_ema", "exit_style": "ema"},
                            trade, settings, now, MagicMock(), "RELIANCE", 101.5)
 
     mock_decide.assert_called_once()
@@ -139,7 +139,7 @@ def test_check_tick_logs_but_does_not_raise_on_exit(mock_decide, caplog):
     trade = {"id": 1, "symbol": "RELIANCE"}
     now = IST.localize(datetime(2026, 8, 10, 11, 0))
 
-    live_feed._check_tick("bot_751/subh30_trailing_ema", {"key": "subh30_trailing_ema", "exit_style": "ema"},
+    live_feed._check_tick("bot_300/subh30_trailing_ema", {"key": "subh30_trailing_ema", "exit_style": "ema"},
                            trade, {}, now, MagicMock(), "RELIANCE", 98.5)
 
     mock_decide.assert_called_once()
@@ -152,5 +152,5 @@ def test_check_tick_swallows_exceptions_fail_closed(mock_decide):
     trade = {"id": 1, "symbol": "RELIANCE"}
     now = IST.localize(datetime(2026, 8, 10, 11, 0))
 
-    live_feed._check_tick("bot_751/subh30_trailing_ema", {"key": "subh30_trailing_ema", "exit_style": "ema"},
+    live_feed._check_tick("bot_300/subh30_trailing_ema", {"key": "subh30_trailing_ema", "exit_style": "ema"},
                            trade, {}, now, MagicMock(), "RELIANCE", 98.5)  # must not raise

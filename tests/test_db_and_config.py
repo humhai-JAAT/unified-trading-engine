@@ -9,14 +9,14 @@ import pytest
 from engine import config
 
 
-def test_exactly_12_variant_ids_with_new_naming():
+def test_exactly_8_variant_ids_with_new_naming():
     ids = config.all_variant_ids()
-    assert len(ids) == 12
-    assert len(set(ids)) == 12  # no duplicates
+    assert len(ids) == 8
+    assert len(set(ids)) == 8  # no duplicates
     for vid in ids:
         assert "/" in vid
         universe, variant = vid.split("/")
-        assert universe in {"bot_751", "bot_551", "bot_400"}
+        assert universe in {"bot_300", "bot_400"}
         assert variant in {
             "subh30_trailing_ema", "subh30_trailing_atr",
             "puradin_trailing_ema", "puradin_trailing_atr",
@@ -44,7 +44,7 @@ def sqlite_db(tmp_path, monkeypatch):
 
 def test_trade_open_close_round_trip(sqlite_db):
     db = sqlite_db
-    variant_id = "bot_751/subh30_trailing_ema"
+    variant_id = "bot_400/subh30_trailing_ema"
 
     trade_id = db.open_trade(
         variant_id=variant_id, symbol="RELIANCE", entry_price=2500.0, quantity=4,
@@ -80,21 +80,21 @@ def test_get_setting_returns_default_when_unset(sqlite_db):
 
 def test_set_setting_then_get_returns_the_new_value(sqlite_db):
     db = sqlite_db
-    db.set_setting("public_variant", "bot_751/puradin_trailing_ema")
-    assert db.get_setting("public_variant") == "bot_751/puradin_trailing_ema"
+    db.set_setting("public_variant", "bot_400/puradin_trailing_ema")
+    assert db.get_setting("public_variant") == "bot_400/puradin_trailing_ema"
 
 
 def test_set_setting_overwrites_an_existing_value(sqlite_db):
     db = sqlite_db
-    db.set_setting("public_variant", "bot_751/puradin_trailing_ema")
+    db.set_setting("public_variant", "bot_400/puradin_trailing_ema")
     db.set_setting("public_variant", "bot_400/subh30_trailing_atr")
     assert db.get_setting("public_variant") == "bot_400/subh30_trailing_atr"
 
 
 def test_variant_isolation_capital_never_crosses(sqlite_db):
     db = sqlite_db
-    v1 = "bot_751/subh30_trailing_ema"
-    v2 = "bot_751/puradin_trailing_atr"
+    v1 = "bot_400/subh30_trailing_ema"
+    v2 = "bot_400/puradin_trailing_atr"
 
     tid = db.open_trade(v1, "TCS", 3000.0, 3, 9000.0, 10.0, None, 1.0)
     db.close_trade(v1, tid, 3300.0, "EMA_TRAIL_EXIT", 12.0)
@@ -107,8 +107,8 @@ def test_variant_isolation_capital_never_crosses(sqlite_db):
 
 def test_checkpoint_tracking_is_per_variant(sqlite_db):
     db = sqlite_db
-    v1 = "bot_751/subh30_trailing_ema"
-    v2 = "bot_551/subh30_trailing_ema"
+    v1 = "bot_400/subh30_trailing_ema"
+    v2 = "bot_300/subh30_trailing_ema"
 
     db.mark_checkpoint_used(v1, "09:20", True, "INFY", None)
     assert db.get_checkpoints_used_today(v1) == {"09:20"}

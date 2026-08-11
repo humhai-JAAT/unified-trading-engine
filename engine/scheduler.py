@@ -118,8 +118,9 @@ def run_full_scan_cycle(settings: dict | None = None) -> dict:
             return {"status": "skipped", "reason": "scan_already_in_progress"}
 
         try:
-            # Stage 1 — one shared fetch for bot_751's full universe.
-            all_symbols = list(nse_universe.get_universe_symbols("total_market"))
+            # Stage 1 — one shared fetch for bot_400's universe (the shared
+            # superset — bot_300's universe is a strict subset of it).
+            all_symbols = list(nse_universe.get_universe_symbols("n500_minus_100"))
             stage1_result = stage1_ranking.fetch_ranking_data(all_symbols)
             if stage1_result.warnings:
                 logger.warning(f"Stage 1 warnings: {stage1_result.warnings}")

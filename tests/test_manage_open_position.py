@@ -120,7 +120,7 @@ def test_manage_open_position_exits_on_stop_loss(mock_account, mock_update_extre
 
     trade = _open_trade()
     mock_get_open_trade.return_value = trade
-    result = manage_open_position("bot_751/subh30_trailing_ema",
+    result = manage_open_position("bot_400/subh30_trailing_ema",
                                    {"key": "subh30_trailing_ema", "exit_style": "ema"},
                                    trade, _settings(), _now())
 
@@ -148,13 +148,13 @@ def test_manage_open_position_flips_to_trailing_on_target_hit_but_no_trail_signa
 
     trade = _open_trade()
     mock_get_open_trade.return_value = trade
-    result = manage_open_position("bot_751/subh30_trailing_ema",
+    result = manage_open_position("bot_400/subh30_trailing_ema",
                                    {"key": "subh30_trailing_ema", "exit_style": "ema"},
                                    trade, _settings(), _now())
 
     assert result["action"] == "hold"
     assert result["target_hit"] is True
-    mock_mark_target_hit.assert_called_once_with("bot_751/subh30_trailing_ema", 1)
+    mock_mark_target_hit.assert_called_once_with("bot_400/subh30_trailing_ema", 1)
 
 
 @patch("engine.db.get_open_trade")
@@ -179,7 +179,7 @@ def test_manage_open_position_trailing_exit_never_goes_below_target_hard_floor(
 
     trade = _open_trade(target_hit=True, peak=110.0)
     mock_get_open_trade.return_value = trade
-    manage_open_position("bot_751/subh30_trailing_ema", {"key": "subh30_trailing_ema", "exit_style": "ema"},
+    manage_open_position("bot_400/subh30_trailing_ema", {"key": "subh30_trailing_ema", "exit_style": "ema"},
                           trade, _settings(), _now())
 
     # exit_position must have been called with a price >= the original target (103),
@@ -205,7 +205,7 @@ def test_manage_open_position_square_off_after_hours(mock_account, mock_update_e
 
     trade = _open_trade()
     mock_get_open_trade.return_value = trade
-    result = manage_open_position("bot_751/subh30_trailing_ema", {"key": "subh30_trailing_ema", "exit_style": "ema"},
+    result = manage_open_position("bot_400/subh30_trailing_ema", {"key": "subh30_trailing_ema", "exit_style": "ema"},
                                    trade, _settings(square_off_time="15:15"), _now(15, 20))
 
     assert result["action"] == "exit"
@@ -215,6 +215,6 @@ def test_manage_open_position_square_off_after_hours(mock_account, mock_update_e
 @patch("engine.variant_engine._position_data_account", return_value=None)
 def test_manage_open_position_holds_when_no_account_configured(mock_account):
     trade = _open_trade()
-    result = manage_open_position("bot_751/subh30_trailing_ema", {"key": "subh30_trailing_ema", "exit_style": "ema"},
+    result = manage_open_position("bot_400/subh30_trailing_ema", {"key": "subh30_trailing_ema", "exit_style": "ema"},
                                    trade, _settings(), _now())
     assert result == {"action": "hold", "reason": "no_broker_account_configured", "symbol": "TESTSYM"}
