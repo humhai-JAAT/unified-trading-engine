@@ -1,5 +1,5 @@
 """Portfolio metrics per variant_id ("{universe_bot}/{variant_key}") — each of
-the 12 variants has its own independent capital pool, so metrics are always
+the 8 variants has its own independent capital pool, so metrics are always
 computed one variant at a time, never pooled across variants."""
 
 import pandas as pd

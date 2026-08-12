@@ -13,9 +13,9 @@ Runs as a single daemon background thread, started/stopped alongside
 engine.scheduler.start_scheduler()/stop_scheduler(). Every poll_interval_seconds
 (default 2s):
   1. re-syncs the websocket subscription set to whichever symbols currently
-     have an open position across all 12 variants (subscribes new, unsubscribes
-     closed) — NOT the full 751-stock universe, only actual open positions (at
-     most 12 symbols), so subscription-count is never a concern here (see the
+     have an open position across all 8 variants (subscribes new, unsubscribes
+     closed) — NOT the full 400-stock universe, only actual open positions (at
+     most 8 symbols), so subscription-count is never a concern here (see the
      2026-08-10 test that subscribed to the full 751-stock universe with no
      error at all — 12 is trivially smaller).
   2. reads the latest LTP for each subscribed symbol via GrowwFeed.get_all_feed()
@@ -90,7 +90,7 @@ def _groww_account() -> GrowwAccount | None:
 
 
 def _all_open_trades() -> dict[str, dict]:
-    """{variant_id: trade} for every one of the 12 variants with an open position."""
+    """{variant_id: trade} for every one of the 8 variants with an open position."""
     open_trades = {}
     for universe_bot in config.UNIVERSE_BOTS:
         for variant_cfg in config.VARIANTS:

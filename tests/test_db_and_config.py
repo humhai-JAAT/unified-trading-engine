@@ -68,6 +68,23 @@ def test_trade_open_close_round_trip(sqlite_db):
     assert closed.iloc[0]["net_pnl"] == pytest.approx((2600 - 2500) * 4 - 15.0 - 16.0)
 
 
+def test_cannot_open_a_second_position_in_the_same_variant_while_one_is_open(sqlite_db):
+    """2026-08-12 live finding: two entry-scan cycles raced and both wrote an
+    OPEN row for the same variant a couple seconds apart. get_open_trade()'s
+    `ORDER BY id DESC LIMIT 1` then permanently shadowed the older row — it
+    never got monitored or closed again. A partial unique index on
+    status='OPEN' now turns that into a loud INSERT failure instead."""
+    db = sqlite_db
+    variant_id = "bot_400/puradin_trailing_atr"
+
+    db.open_trade(variant_id=variant_id, symbol="HINDCOPPER", entry_price=544.75, quantity=18,
+                   capital_used=10000.0, entry_charges=12.0, arm_cycle_id=None, leverage=1.0)
+
+    with pytest.raises(Exception):
+        db.open_trade(variant_id=variant_id, symbol="BERGEPAINT", entry_price=547.0, quantity=18,
+                       capital_used=10000.0, entry_charges=12.0, arm_cycle_id=None, leverage=1.0)
+
+
 def test_get_setting_returns_default_when_unset(sqlite_db):
     """2026-08-11 live finding: admin (app.py) and viewer (viewer_app.py) are
     two SEPARATE Streamlit Cloud deployments with separate local filesystems

@@ -613,3 +613,63 @@ pushed without a separate explicit go-ahead — see this session's own
 end-of-turn note for whether that happened. Reminder for whoever pushes:
 Streamlit Cloud auto-redeploys `app.py` on push to `main`, which resets the
 in-process APScheduler — click "Start" in the admin sidebar again afterward.
+
+## 2026-08-12 — Live production incident: silent-failure position management, a duplicate open trade, AND a genuine two-process zombie deployment
+
+User opened the app the next trading day and immediately spotted something
+real: a `puradin` variant's open HINDCOPPER position had Current price ==
+Entry price exactly, Peak stuck at entry, target never flagged hit despite
+their own TradingView reference chart showing the target (and a trailing
+stop) already triggered hours earlier. Investigated with the same
+live-verify-don't-guess discipline as every prior Phase 6 session — full
+blow-by-blow in Phase.md, short version:
+
+- **Groww was rate-limited** (verified with a real `fetch_candles()` call,
+  got the exact "rate limit exceeded" error back) and `manage_open_position`
+  had NO fallback to Angel One, unlike Stage 1/2 — fixed with an ordered
+  account list + per-account try/fallback.
+- **That failure was completely invisible** — `run_position_management_
+  cycle()` never got the crash/warning-visibility fix `run_full_scan_cycle()`
+  got the day before. Fixed the same way: per-variant try/except (so one bad
+  variant can't starve every variant after it), whole-cycle crash handling,
+  and abnormal-hold reasons now populate the cycle log's `warnings` column,
+  read by an extended `render_warning_banner()`.
+- **A REAL duplicate open position** existed — `bot_400/puradin_trailing_
+  atr` had 2 simultaneously-OPEN rows, one permanently shadowed by
+  `get_open_trade()`'s `ORDER BY id DESC LIMIT 1`. Root-caused the "how":
+  chasing the 1.8-second gap between the two entries led to discovering the
+  `bot_751`/`bot_551` tables — dropped the day before in the universe-
+  redefinition reset — had been SILENTLY RECREATED with fresh same-day data.
+  **An old-code process had been running continuously since that morning's
+  market open, in parallel with the new bot_300/bot_400 code**, confirmed
+  independently via alternating old/new universe-key mentions in
+  `entry_scan` warnings AND a suspiciously exact ~8-second-apart-every-
+  2-minutes double-cadence in `position_management` cycle-log rows (two
+  independently-stable schedulers, started ~8s apart). **This needed the
+  user's own action** — asked them to reboot the Streamlit Cloud app (can't
+  do this myself, no MCP/API for Streamlit Cloud container control) —
+  confirmed dead afterward (no more old-universe mentions, no more paired
+  cycle-log rows, cycle log went quiet as expected until "Start" is clicked
+  again — the by-now-familiar post-redeploy/reboot gotcha).
+- Reconciled the orphaned HINDCOPPER manually (closed via
+  `broker.exit_position()` at a real fetched Angel One quote, clearly
+  tagged `exit_reason="ADMIN_RECONCILE_ORPHANED_DUPLICATE"`), then added a
+  Postgres partial unique index (`WHERE status='OPEN'`) per variant table so
+  this specific race can never produce a silent duplicate again — a
+  genuinely new class of DB-level safeguard for this project, not present
+  before.
+- **Separately, user asked to verify the strategy never enters on a stale
+  (already-ongoing) buy signal, only a freshly-turned-true one.** The guard
+  already existed and was already correct (`strategy.check_entry`'s
+  "signal_not_fresh" check) but had ZERO test coverage — `engine/strategy.py`
+  had no test file at all before this. Added `tests/test_strategy.py` (7
+  tests), proven against a real synthetic multi-bar breakout through the
+  actual indicator pipeline, not just asserted from reading the code.
+
+**Pattern reinforced yet again**: "run it for real against production and
+look at the raw data" found a root cause (the zombie process) that reading
+code alone never would have surfaced — the SAME lesson from three separate
+2026-08-11 findings, now a fourth. **77/77 tests pass** (was 63 right after
+the universe-redefinition work earlier the same calendar day — this was
+technically the NEXT trading session). See Phase.md for the complete
+numbered bug list and exact fix details.

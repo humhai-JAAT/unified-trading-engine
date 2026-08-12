@@ -1,9 +1,9 @@
 """Stage 2 — candle history layer. See Architecture.md's "Stage 2 — candle
 history layer" for the full design this implements.
 
-Merges the 3 universe-bots' top-N lists from Stage 1, removes duplicate
+Merges both universe-bots' top-N lists from Stage 1, removes duplicate
 symbols, then fetches 1-symbol-per-call candle history ONLY for that
-deduplicated set — shared read-only across whichever of the 12 variants need
+deduplicated set — shared read-only across whichever of the 8 variants need
 each symbol, instead of every variant/universe re-fetching independently.
 """
 

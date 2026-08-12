@@ -1,4 +1,4 @@
-"""Per-variant entry-timing + trailing-exit logic — the 12 variants (3
+"""Per-variant entry-timing + trailing-exit logic — the 8 variants (2
 universe-bots x 4 variants, see engine/config.py) each run this against the
 SHARED data Stage 1/Stage 2 already fetched once per cycle. No variant ever
 fetches its own gainers ranking or candle history from scratch — that's the
@@ -110,24 +110,45 @@ def check_atr_trail_exit(candle_df: pd.DataFrame, peak_price: float, atr_period:
 # universe scan, not a handful of open-position lookups.
 # ---------------------------------------------------------------------------
 
-def _position_data_account() -> BrokerAccount | None:
+def _position_data_accounts() -> list[BrokerAccount]:
+    """Primary (Groww) then fallback (Angel One) — same account priority as
+    Stage 1/2, but previously this path had NO fallback at all (2026-08-12
+    live finding: Groww hit its own rate limit, which silently froze
+    position management for every open trade with zero visibility, since a
+    Groww-only failure here fell straight through to the "no_price_data"
+    hold below instead of trying the other broker)."""
     accounts = get_configured_accounts()
-    pool = accounts["groww"] or accounts["angelone"]
-    return pool[0] if pool else None
+    return (accounts["groww"][:1] or []) + (accounts["angelone"][:1] or [])
 
 
 def manage_open_position(variant_id: str, variant_cfg: dict, trade: dict, settings: dict,
                           now: datetime) -> dict:
     """Ported from the sibling v2 bot's _manage_open_position, adapted to this
-    project's variant_id naming and account-based fetching."""
-    account = _position_data_account()
-    if account is None:
+    project's variant_id naming and account-based fetching. Tries each
+    configured account in priority order (Groww, then Angel One) until one
+    returns real candle data — see _position_data_accounts()."""
+    accounts = _position_data_accounts()
+    if not accounts:
         return {"action": "hold", "reason": "no_broker_account_configured", "symbol": trade["symbol"]}
 
     symbol = trade["symbol"]
-    df_1m = account.fetch_candles(symbol, interval="1m", period_days=1)
-    if df_1m is None or df_1m.empty:
-        return {"action": "hold", "reason": "no_price_data", "symbol": symbol}
+    account = None
+    df_1m = None
+    failed_accounts = []
+    for candidate in accounts:
+        try:
+            candidate_df = candidate.fetch_candles(symbol, interval="1m", period_days=1)
+        except Exception as e:
+            failed_accounts.append(f"{candidate.account_id}: {e}")
+            continue
+        if candidate_df is not None and not candidate_df.empty:
+            account, df_1m = candidate, candidate_df
+            break
+        failed_accounts.append(f"{candidate.account_id}: empty response")
+
+    if account is None:
+        return {"action": "hold", "reason": "no_price_data", "symbol": symbol,
+                "failed_accounts": failed_accounts}
 
     return locked_decide_and_exit(variant_id, variant_cfg, trade, settings, now, account, symbol, df_1m)
 

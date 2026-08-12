@@ -76,10 +76,19 @@ _TRADES_TABLE_COLUMNS = """
 
 
 def _variant_tables_sql(pk: str) -> str:
-    return "\n\n".join(
-        f"CREATE TABLE IF NOT EXISTS {table} (" + _TRADES_TABLE_COLUMNS.format(pk=pk) + ");"
-        for table in VARIANT_TABLES.values()
-    )
+    """Each table also gets a partial unique index guaranteeing at most one
+    'OPEN' row — a real production incident (2026-08-12) had two concurrent
+    entry-scan cycles both pass the was_flat check for the same variant a
+    couple seconds apart and both write an OPEN row; get_open_trade()'s
+    `ORDER BY id DESC LIMIT 1` then permanently shadowed the older one,
+    which never got monitored/closed again. This index turns that class of
+    race into a loud INSERT failure instead of a silent orphaned position."""
+    stmts = []
+    for table in VARIANT_TABLES.values():
+        stmts.append(f"CREATE TABLE IF NOT EXISTS {table} (" + _TRADES_TABLE_COLUMNS.format(pk=pk) + ");")
+        stmts.append(f"CREATE UNIQUE INDEX IF NOT EXISTS ux_{table}_one_open ON {table} (status) "
+                      f"WHERE status = 'OPEN';")
+    return "\n\n".join(stmts)
 
 
 _SHARED_SCHEMA_TAIL = """
@@ -337,7 +346,7 @@ def get_arm_cycles_used_today(variant_id: str, symbol: str) -> set[str]:
 
 def get_starting_capital(variant_id: str, default: float) -> float:
     """This variant's realized capital base = default starting capital + all of
-    THIS variant's realized net P&L so far today. Each of the 12 variants is
+    THIS variant's realized net P&L so far today. Each of the 8 variants is
     fully independent — no shared pool, per the sibling bots' established
     pattern for their own multi-variant designs."""
     table = _table(variant_id)
@@ -429,7 +438,7 @@ def mark_checkpoint_used(variant_id: str, checkpoint_time: str, signal_found: bo
 
 
 def reset_all_data() -> None:
-    """Wipes all 12 variants' trades, cycle logs, and checkpoint logs —
+    """Wipes all 8 variants' trades, cycle logs, and checkpoint logs —
     irreversible. Confirm-gated in the dashboard, never called automatically."""
     with get_engine().begin() as conn:
         conn.execute(text("DELETE FROM ute_checkpoint_log"))

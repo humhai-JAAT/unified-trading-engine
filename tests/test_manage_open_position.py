@@ -70,9 +70,10 @@ class FakeAccount:
     """Minimal stand-in for engine.broker_accounts.BrokerAccount, scripted to
     return whichever 1m/5m frame each test needs."""
 
-    def __init__(self, df_1m, df_5m=None):
+    def __init__(self, df_1m, df_5m=None, account_id="fake_account"):
         self._df_1m = df_1m
         self._df_5m = df_5m
+        self.account_id = account_id
 
     def fetch_candles(self, symbol, interval, period_days):
         return self._df_1m if interval == "1m" else self._df_5m
@@ -104,7 +105,7 @@ def _now(hh=10, mm=0):
 @patch("engine.db.get_open_trade")
 @patch("engine.broker.exit_position")
 @patch("engine.broker.update_extremes")
-@patch("engine.variant_engine._position_data_account")
+@patch("engine.variant_engine._position_data_accounts")
 def test_manage_open_position_exits_on_stop_loss(mock_account, mock_update_extremes, mock_exit,
                                                    mock_get_open_trade):
     # entry=100, capital_used=1000, SL=1.5% -> stop_price = 100 - (1000*1.5/100)/10 = 98.5
@@ -114,7 +115,7 @@ def test_manage_open_position_exits_on_stop_loss(mock_account, mock_update_extre
         "Low": [100, 100, 98.9, 98.0, 98.4],  # bar index 3 breaches stop_price (98.5)
         "Close": [100, 100, 99.0, 98.3, 98.6],
     }, index=idx)
-    mock_account.return_value = FakeAccount(df_1m)
+    mock_account.return_value = [FakeAccount(df_1m)]
     mock_update_extremes.return_value = (100.0, 98.0)
     mock_exit.return_value = {"trade_id": 1, "exit_price": 98.5, "exit_reason": "STOP_LOSS", "exit_charges": 1.0}
 
@@ -132,7 +133,7 @@ def test_manage_open_position_exits_on_stop_loss(mock_account, mock_update_extre
 @patch("engine.db.get_open_trade")
 @patch("engine.db.mark_target_hit")
 @patch("engine.broker.update_extremes")
-@patch("engine.variant_engine._position_data_account")
+@patch("engine.variant_engine._position_data_accounts")
 def test_manage_open_position_flips_to_trailing_on_target_hit_but_no_trail_signal_yet(
     mock_account, mock_update_extremes, mock_mark_target_hit, mock_get_open_trade
 ):
@@ -143,7 +144,7 @@ def test_manage_open_position_flips_to_trailing_on_target_hit_but_no_trail_signa
         "Close": [100, 102, 103.2],
     }, index=idx_1m)
     df_5m = _flat_5m(level=103.2)  # above its own EMA9 -> no EMA trail signal yet
-    mock_account.return_value = FakeAccount(df_1m, df_5m)
+    mock_account.return_value = [FakeAccount(df_1m, df_5m)]
     mock_update_extremes.return_value = (103.2, 100.0)
 
     trade = _open_trade()
@@ -160,7 +161,7 @@ def test_manage_open_position_flips_to_trailing_on_target_hit_but_no_trail_signa
 @patch("engine.db.get_open_trade")
 @patch("engine.broker.exit_position")
 @patch("engine.broker.update_extremes")
-@patch("engine.variant_engine._position_data_account")
+@patch("engine.variant_engine._position_data_accounts")
 def test_manage_open_position_trailing_exit_never_goes_below_target_hard_floor(
     mock_account, mock_update_extremes, mock_exit, mock_get_open_trade
 ):
@@ -173,7 +174,7 @@ def test_manage_open_position_trailing_exit_never_goes_below_target_hard_floor(
         "Open": [104, 103.5], "High": [104, 103.6], "Low": [103.4, 103.3], "Close": [104, 103.5],
     }, index=idx_1m)
     df_5m = _dip_below_ema9_5m()  # last close = 90, well below target (103)
-    mock_account.return_value = FakeAccount(df_1m, df_5m)
+    mock_account.return_value = [FakeAccount(df_1m, df_5m)]
     mock_update_extremes.return_value = (110.0, 100.0)
     mock_exit.return_value = {"trade_id": 1, "exit_price": 103.0, "exit_reason": "EMA_TRAIL_EXIT", "exit_charges": 1.0}
 
@@ -192,14 +193,14 @@ def test_manage_open_position_trailing_exit_never_goes_below_target_hard_floor(
 @patch("engine.db.get_open_trade")
 @patch("engine.broker.exit_position")
 @patch("engine.broker.update_extremes")
-@patch("engine.variant_engine._position_data_account")
+@patch("engine.variant_engine._position_data_accounts")
 def test_manage_open_position_square_off_after_hours(mock_account, mock_update_extremes, mock_exit,
                                                        mock_get_open_trade):
     idx_1m = pd.date_range("2026-08-03 15:10", periods=2, freq="1min", tz="Asia/Kolkata")
     df_1m = pd.DataFrame({
         "Open": [101, 101], "High": [101.2, 101.2], "Low": [100.9, 100.9], "Close": [101, 101],
     }, index=idx_1m)
-    mock_account.return_value = FakeAccount(df_1m, _flat_5m(level=101))
+    mock_account.return_value = [FakeAccount(df_1m, _flat_5m(level=101))]
     mock_update_extremes.return_value = (101.2, 100.9)
     mock_exit.return_value = {"trade_id": 1, "exit_price": 101.0, "exit_reason": "SQUARE_OFF", "exit_charges": 1.0}
 
@@ -212,9 +213,49 @@ def test_manage_open_position_square_off_after_hours(mock_account, mock_update_e
     assert result["reason"] == "SQUARE_OFF"
 
 
-@patch("engine.variant_engine._position_data_account", return_value=None)
+@patch("engine.variant_engine._position_data_accounts", return_value=[])
 def test_manage_open_position_holds_when_no_account_configured(mock_account):
     trade = _open_trade()
     result = manage_open_position("bot_400/subh30_trailing_ema", {"key": "subh30_trailing_ema", "exit_style": "ema"},
                                    trade, _settings(), _now())
     assert result == {"action": "hold", "reason": "no_broker_account_configured", "symbol": "TESTSYM"}
+
+
+@patch("engine.variant_engine._position_data_accounts")
+def test_manage_open_position_falls_back_to_second_account_when_primary_returns_empty(mock_account):
+    """2026-08-12 live finding: the primary (Groww) account can fail (rate
+    limit, outage) while a configured secondary (Angel One) works fine —
+    position management must try the next configured account rather than
+    silently holding forever on the first one's failure."""
+    df_1m = pd.DataFrame({
+        "Open": [100], "High": [100.5], "Low": [99.8], "Close": [100.2],
+    }, index=pd.date_range("2026-08-03 09:20", periods=1, freq="1min", tz="Asia/Kolkata"))
+    dead_primary = FakeAccount(pd.DataFrame(), account_id="dead_primary")  # empty response
+    working_fallback = FakeAccount(df_1m, account_id="working_fallback")
+    mock_account.return_value = [dead_primary, working_fallback]
+
+    trade = _open_trade()
+    with patch("engine.db.get_open_trade", return_value=trade), \
+         patch("engine.broker.update_extremes", return_value=(100.2, 99.8)):
+        result = manage_open_position("bot_400/subh30_trailing_ema",
+                                       {"key": "subh30_trailing_ema", "exit_style": "ema"},
+                                       trade, _settings(), _now())
+
+    assert result["action"] == "hold"
+    assert "reason" not in result  # a normal hold, not a data-failure hold
+
+
+@patch("engine.variant_engine._position_data_accounts")
+def test_manage_open_position_holds_with_visibility_when_all_accounts_fail(mock_account):
+    dead_primary = FakeAccount(pd.DataFrame(), account_id="dead_primary")
+    dead_fallback = FakeAccount(None, account_id="dead_fallback")
+    mock_account.return_value = [dead_primary, dead_fallback]
+
+    trade = _open_trade()
+    result = manage_open_position("bot_400/subh30_trailing_ema",
+                                   {"key": "subh30_trailing_ema", "exit_style": "ema"},
+                                   trade, _settings(), _now())
+
+    assert result["action"] == "hold"
+    assert result["reason"] == "no_price_data"
+    assert len(result["failed_accounts"]) == 2

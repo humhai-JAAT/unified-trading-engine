@@ -605,3 +605,79 @@ restart, not a preserve-history migration.
 
 Not committed/pushed without a separate explicit go-ahead, per this
 project's own "ask before committing" rule.
+
+**Same day, next trading session (2026-08-12) — user reported HINDCOPPER
+stuck at entry price with zero monitoring, target already hit on their own
+TradingView reference. Live-debugged to root cause, found 3 real bugs plus a
+genuine two-process production incident:**
+
+1. **Groww hit its own rate limit** (live-verified directly:
+   `account.fetch_candles()` raised "The rate limit for the Groww API has
+   been exceeded"). `variant_engine._position_data_account()` was Groww-only
+   with NO Angel One fallback (unlike Stage 1/2, which do fall back) — so
+   once Groww failed, EVERY open position silently held with
+   `reason="no_price_data"`, forever, with zero visibility. **Fixed**:
+   renamed to `_position_data_accounts()`, tries Groww then Angel One in
+   order, only holds if both fail.
+2. **That silent hold was invisible everywhere.** `run_position_management_
+   cycle()` never got the crash/warning-visibility treatment
+   `run_full_scan_cycle()` got in the 2026-08-11 session — `managed=0` in
+   the cycle log looked alarming but was actually just "zero exits this
+   cycle" (normal most of the time), while the REAL problem (positions
+   silently un-priced) had no signal anywhere. **Fixed**: per-variant
+   try/except so one crashing variant can't starve every variant after it
+   in iteration order, a whole-cycle try/except matching entry_scan's
+   crash-visibility pattern, and abnormal-hold reasons now flow into the
+   cycle log's `warnings` column — `dashboard_view.render_warning_banner()`
+   now also checks the latest `position_management` cycle, not just
+   `entry_scan`.
+3. **A genuine duplicate open position**: `ute_trades_bot_400__puradin_
+   trailing_atr` had TWO simultaneously-OPEN rows (HINDCOPPER id=3,
+   BERGEPAINT id=4, entered 1.8 seconds apart). `db.get_open_trade()`'s
+   `ORDER BY id DESC LIMIT 1` permanently shadowed the older row — it could
+   never be monitored or closed again by any code path. **Fixed**: a
+   partial unique index (`WHERE status = 'OPEN'`) on every variant table,
+   added to `_variant_tables_sql()` and applied to all 8 live production
+   tables (had to reconcile the shadowed HINDCOPPER first — closed it
+   manually via `broker.exit_position()` at a real fetched Angel One quote,
+   `exit_reason="ADMIN_RECONCILE_ORPHANED_DUPLICATE"` — since a table with
+   an existing duplicate can't have the unique index added until the
+   duplicate is gone).
+4. **Root cause of the duplicate, and a much bigger finding**: investigating
+   the 1.8-second entry gap led to discovering `ute_trades_bot_751__*` and
+   `bot_551__*` tables had been RECREATED with fresh 2026-08-12 data
+   (BATAINDIA entered/closed 09:17, BLUESTONE entered 09:42) — hours after
+   they'd been dropped in the 2026-08-11 session's universe-redefinition
+   reset. This proved an **old-code process had been running continuously
+   since that morning's market open**, alongside whatever was running the
+   new `bot_300`/`bot_400` code — confirmed independently by `entry_scan`
+   cycle-log warnings alternating between mentioning `bot_751`/`bot_551`
+   (old) and `bot_300`/`bot_400` (new) minutes apart, and by
+   `position_management` cycle-log rows consistently arriving in pairs
+   ~8 seconds apart every single 2-minute interval for hours (two
+   independent, internally-stable schedulers, offset by whenever each
+   process happened to start). **Not something I could fix myself** — asked
+   the user to reboot the Streamlit Cloud app (Manage app → Reboot).
+   Confirmed dead afterward: `bot_751`/`bot_551` stopped reappearing, the
+   paired position_management rows stopped, and — expectedly, per the
+   established "push/reboot resets the scheduler" gotcha — cycle_log went
+   completely quiet until the user clicks "Start" again.
+5. **Separately verified, at the user's request**: the entry strategy's
+   freshness guard (`strategy.check_entry`, the `signal_not_fresh` check —
+   only enters on the exact bar `entry_signal` first turns True, not a
+   signal that's been sitting True for one or more prior bars) was correct
+   but had **zero test coverage** despite being exactly the mechanism the
+   user was worried about ("purane buy signal pr trade nahi lena chahiye").
+   Added `tests/test_strategy.py` (7 tests) — didn't just read the code and
+   assert it looked right, built a synthetic multi-bar-sustained breakout
+   and proved via the REAL indicator pipeline that only the first bar
+   enters and the very next (still-true, now-stale) bar is correctly
+   rejected, plus arm-cycle-reuse and previous-day guards.
+
+**77/77 tests pass** (was 63 at the end of the universe-redefinition work
+this same day — +2 fallback tests, +4 position-management-cycle tests, +1
+duplicate-open-constraint test, +7 strategy freshness tests). Production
+Supabase: orphaned HINDCOPPER closed, unique-open constraint live on all 8
+tables, zombie `bot_751`/`bot_551` tables dropped a second time after the
+reboot (confirmed this time nothing recreated them). Code fixes committed
+and pushed same session — see memory.md for the exact commit.

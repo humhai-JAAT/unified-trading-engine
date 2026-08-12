@@ -134,24 +134,39 @@ def inject_custom_css() -> None:
 
 
 def render_warning_banner() -> None:
-    """Reads the most recent entry-scan cycle's warnings column — populated
-    whenever Stage 1/2 used a fallback path or couldn't recover a chunk/symbol
-    even after fallback (see Architecture.md's "Error visibility")."""
-    logs = db.get_cycle_logs(limit=20)
+    """Reads the most recent entry-scan AND position-management cycles'
+    warnings columns — populated whenever Stage 1/2 used a fallback path or
+    couldn't recover a chunk/symbol even after fallback, or (2026-08-12,
+    live finding) whenever position management couldn't get price data for
+    an open position (e.g. a broker outage) and had to hold blind. Previously
+    only entry_scan's warnings were ever checked here, so a position could go
+    completely unmonitored with zero visibility anywhere on the dashboard —
+    see Architecture.md's "Error visibility"."""
+    logs = db.get_cycle_logs(limit=30)
     scan_logs = logs[logs["stage"] == "entry_scan"] if not logs.empty and "stage" in logs.columns else logs
     if scan_logs.empty:
         st.info("ℹ️ No entry-scan cycle has run yet — waiting for the first 5-min-boundary scan.")
-        return
-
-    latest = scan_logs.iloc[0]
-    warnings_text = str(latest.get("warnings") or "").strip()
-    if warnings_text:
-        st.warning(
-            f"⚠️ Last scan cycle ({latest['cycle_time']}) had incomplete data: {warnings_text}",
-            icon="⚠️",
-        )
     else:
-        st.success(f"✅ Last scan cycle ({latest['cycle_time']}) fetched full data, no fallback needed.", icon="✅")
+        latest = scan_logs.iloc[0]
+        warnings_text = str(latest.get("warnings") or "").strip()
+        if warnings_text:
+            st.warning(
+                f"⚠️ Last scan cycle ({latest['cycle_time']}) had incomplete data: {warnings_text}",
+                icon="⚠️",
+            )
+        else:
+            st.success(f"✅ Last scan cycle ({latest['cycle_time']}) fetched full data, no fallback needed.", icon="✅")
+
+    pos_logs = logs[logs["stage"] == "position_management"] if not logs.empty and "stage" in logs.columns else logs
+    if not pos_logs.empty:
+        latest_pos = pos_logs.iloc[0]
+        pos_warnings_text = str(latest_pos.get("warnings") or "").strip()
+        if pos_warnings_text:
+            st.warning(
+                f"⚠️ Last position-management cycle ({latest_pos['cycle_time']}) "
+                f"couldn't fully monitor open positions: {pos_warnings_text}",
+                icon="⚠️",
+            )
 
 
 def render_account_health() -> None:

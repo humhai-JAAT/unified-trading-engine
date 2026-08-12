@@ -2,10 +2,10 @@
 sibling bots:
 
   1. Position management (fast, every position_management_interval_minutes,
-     default 2) — manages any of the 12 variants' open positions. Lightweight
-     (at most 12 symbols), so stays fast and frequent regardless of how heavy
+     default 2) — manages any of the 8 variants' open positions. Lightweight
+     (at most 8 symbols), so stays fast and frequent regardless of how heavy
      entry-scanning is.
-  2. Entry scanning (Stage 1 + Stage 2 + all 12 variants' scan_for_entry),
+  2. Entry scanning (Stage 1 + Stage 2 + all 8 variants' scan_for_entry),
      aligned to 5-min candle boundaries with a 1-min safety offset (e.g.
      09:21, 09:26, 09:31...) instead of a plain N-minute interval — because
      the underlying candle data only changes every 5 minutes regardless, so
@@ -64,8 +64,23 @@ def is_awake(settings: dict, now: datetime) -> bool:
 
 
 def run_position_management_cycle(settings: dict | None = None) -> dict:
-    """Manages every one of the 12 variants' open positions, if any. Runs
-    independently of, and more frequently than, the entry-scan cycle."""
+    """Manages every one of the 8 variants' open positions, if any. Runs
+    independently of, and more frequently than, the entry-scan cycle.
+
+    2026-08-12 live finding: a data-fetch failure for one open position
+    (e.g. a broker outage) used to return a plain silent 'hold' with zero
+    visibility anywhere — the dashboard's warning banner only ever looked at
+    entry_scan's cycle log, never position_management's, so a position could
+    go unmonitored indefinitely without a single warning appearing. Fixed by
+    (a) catching a single variant's exception without aborting every OTHER
+    variant's management this same cycle (previously an unhandled exception
+    here would abort the whole loop, silently starving every variant later
+    in iteration order too — see engine/config.py's UNIVERSE_BOTS/VARIANTS
+    order), (b) wrapping the whole cycle in the same crash-visibility
+    try/except run_full_scan_cycle already had, and (c) surfacing any
+    abnormal hold's reason (no_price_data, no_broker_account_configured,
+    error) in this cycle's own warnings column, read by
+    dashboard_view.render_warning_banner()."""
     settings = settings or config.load_settings()
     db.init_db()
     now = _now_ist()
@@ -73,24 +88,40 @@ def run_position_management_cycle(settings: dict | None = None) -> dict:
     if market_status(now) != "open":
         return {"status": market_status(now)}
 
-    results = {}
-    for universe_bot in config.UNIVERSE_BOTS:
-        for variant_cfg in config.VARIANTS:
-            variant_id = f"{universe_bot['key']}/{variant_cfg['key']}"
-            trade = db.get_open_trade(variant_id)
-            if trade:
-                results[variant_id] = variant_engine.manage_open_position(
-                    variant_id, variant_cfg, trade, settings, now
-                )
+    try:
+        results = {}
+        for universe_bot in config.UNIVERSE_BOTS:
+            for variant_cfg in config.VARIANTS:
+                variant_id = f"{universe_bot['key']}/{variant_cfg['key']}"
+                trade = db.get_open_trade(variant_id)
+                if not trade:
+                    continue
+                try:
+                    results[variant_id] = variant_engine.manage_open_position(
+                        variant_id, variant_cfg, trade, settings, now
+                    )
+                except Exception as e:
+                    logger.error(f"Position management for {variant_id} crashed: {e}")
+                    results[variant_id] = {"action": "hold", "reason": f"error: {e}", "symbol": trade["symbol"]}
 
-    db.log_cycle(status="OK", stage="position_management",
-                  message=f"managed={len([r for r in results.values() if r.get('action') != 'hold'])}")
-    return {"status": "open", "managed": results}
+        managed = [r for r in results.values() if r.get("action") != "hold"]
+        data_warnings = [
+            f"{variant_id}: {r['reason']}" for variant_id, r in results.items()
+            if r.get("action") == "hold" and r.get("reason")
+        ]
+        db.log_cycle(status="OK", stage="position_management",
+                      message=f"managed={len(managed)}",
+                      warnings="; ".join(data_warnings) if data_warnings else "")
+        return {"status": "open", "managed": results}
+    except Exception as e:
+        logger.error(f"Position management cycle crashed mid-execution: {e}")
+        db.log_cycle(status="ERROR", stage="position_management", error=str(e))
+        raise
 
 
 def run_full_scan_cycle(settings: dict | None = None) -> dict:
     """Stage 1 (shared ranking fetch) -> per-universe filter -> Stage 2
-    (shared, deduped candle fetch) -> all 12 variants' scan_for_entry. See
+    (shared, deduped candle fetch) -> all 8 variants' scan_for_entry. See
     Architecture.md for the full pipeline this implements.
 
     Guards against two overlapping executions (2026-08-11 live-market
@@ -147,7 +178,7 @@ def run_full_scan_cycle(settings: dict | None = None) -> dict:
             if stage2_result.warnings:
                 logger.warning(f"Stage 2 warnings: {stage2_result.warnings}")
 
-            # All 12 variants scan against the shared data — was_flat determined fresh
+            # All 8 variants scan against the shared data — was_flat determined fresh
             # per variant right before its own scan (each variant is independent).
             scan_results = {}
             for universe_bot in config.UNIVERSE_BOTS:

@@ -1,7 +1,7 @@
 """Port of the user's Pine Script "EMA-MACD V2.1.2" — entry logic only, unchanged
 from the sibling bots (intraday-trading-bot v1/v2, bot-v3). Timeframe-agnostic:
 works on whatever OHLC bars are passed in (this project evaluates it on 5-min
-candles for all 12 variants — see Architecture.md).
+candles for all 8 variants — see Architecture.md).
 
 Pine reference (entry side):
     fastEMA=9  slowEMA=30  trendEMA=100  trendSMA=9 (SMA of EMA100)
