@@ -10,7 +10,7 @@ path responsible for that guarantee; these tests prove it actually holds.
 import numpy as np
 import pandas as pd
 
-from engine.strategy import MIN_BARS_REQUIRED, build_indicators, check_entry
+from engine.strategy import MAX_ARM_CYCLE_AGE_DAYS, MIN_BARS_REQUIRED, build_indicators, check_entry
 
 
 def _rising_breakout_candles(warmup=None, rise_bars=8):
@@ -101,7 +101,7 @@ def test_check_entry_blocks_an_arm_cycle_already_used_today():
     assert reused_check.reason == "arm_cycle_already_used"
 
 
-def test_check_entry_blocks_an_arm_cycle_from_a_previous_day():
+def test_check_entry_blocks_an_arm_cycle_older_than_the_max_age():
     """Real bug hit in production on the sibling bots (2026-07-14): without
     this guard, a bullish crossover from a PREVIOUS day that never got a
     bearish crossunder since stays 'armed' indefinitely."""
@@ -110,7 +110,25 @@ def test_check_entry_blocks_an_arm_cycle_from_a_previous_day():
     first_true_bar = enriched.index[enriched["entry_signal"]][0]
     df_at_first = df.loc[:first_true_bar]
 
-    a_later_day = first_true_bar + pd.Timedelta(days=1)
-    result = check_entry(df_at_first, today=a_later_day)
+    way_later = first_true_bar + pd.Timedelta(days=MAX_ARM_CYCLE_AGE_DAYS + 1)
+    result = check_entry(df_at_first, today=way_later)
     assert result.signal is False
-    assert result.reason == "arm_cycle_not_today"
+    assert result.reason == "arm_cycle_stale"
+
+
+def test_check_entry_allows_a_one_day_old_arm_cycle_with_a_fresh_trigger():
+    """2026-08-13 live finding: ASTRAL and NETWEB both had a genuinely fresh
+    entry_signal transition (fresh trigger bar) whose underlying EMA9/30
+    crossover happened the PREVIOUS trading day — the old same-day-only rule
+    wrongly rejected both as 'arm_cycle_not_today' even though the trigger
+    itself was fresh (already guaranteed by the freshness check above). A
+    1-day-old crossover must be allowed through."""
+    df = _rising_breakout_candles()
+    enriched = build_indicators(df)
+    first_true_bar = enriched.index[enriched["entry_signal"]][0]
+    df_at_first = df.loc[:first_true_bar]
+
+    next_day = first_true_bar + pd.Timedelta(days=1)
+    result = check_entry(df_at_first, today=next_day)
+    assert result.signal is True
+    assert result.reason == "entry"

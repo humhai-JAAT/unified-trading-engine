@@ -681,3 +681,36 @@ Supabase: orphaned HINDCOPPER closed, unique-open constraint live on all 8
 tables, zombie `bot_751`/`bot_551` tables dropped a second time after the
 reboot (confirmed this time nothing recreated them). Code fixes committed
 and pushed same session — see memory.md for the exact commit.
+
+**2026-08-13 — user spotted 3 real missed entries (FLUOROCHEM, ASTRAL,
+NETWEB) via TradingView reference, all correctly root-caused before
+touching code:**
+- FLUOROCHEM: genuinely fresh 09:20 signal, but entry_scan cycles ran
+  7-9 min apart (not the intended 5) during the first 20 min of trading —
+  Groww was still recovering from the prior session's rate-limit,
+  forcing heavier Angel-One-only fallback load. By 09:44 cadence settled
+  to ~5 min once Groww recovered. Not a code bug — flagged, not fixed
+  (self-resolved as Groww recovered).
+- ASTRAL/NETWEB: both blocked by `arm_cycle_not_today` even though their
+  trigger bar was genuinely fresh today — their EMA9/30 crossover
+  (`arm_cycle_id`) was from the previous trading day. User initially
+  disagreed with the finding ("astral 9:15 13-08-2026 ki hai") — re-verified
+  carefully rather than dismissing, and both were actually right: the
+  crossover genuinely was from 2026-08-12, but the TRIGGER bar (what the
+  freshness check cares about) was genuinely fresh 2026-08-13, matching the
+  user's manual check exactly. The guard's same-day-crossover requirement
+  was simply stricter than needed. **Fixed**: `strategy.check_entry` now
+  bounds crossover staleness by `MAX_ARM_CYCLE_AGE_DAYS = 3` (survives a
+  Friday→Monday gap) instead of requiring same-calendar-day — the original
+  2026-07-14 stale-arm bug this guard exists for is still blocked (anything
+  >3 days old), only the needlessly-strict same-day case was loosened.
+  Live-verified against real Groww data: all 3 symbols now correctly return
+  `entry`. Reviewed the rest of `strategy.py` and the arm-cycle DB lookup
+  for similar overly-strict gates per the user's ask ("kahi aur bhi to
+  fucked nahi kar rakha hai") — found none. 2 new regression tests.
+  **78/78 tests pass.**
+- Separately noticed Angel One intermittently 403'ing on candle fetches for
+  specific symbols (ASTRAL, NETWEB) mid-session — Groww was healthy
+  throughout and used for the live verification instead. Not investigated
+  further this session; worth a look if Angel One (the fallback broker)
+  keeps doing this.

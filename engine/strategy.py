@@ -15,6 +15,7 @@ Pine reference (entry side):
 """
 
 from dataclasses import dataclass
+from datetime import timedelta
 
 import pandas as pd
 
@@ -28,6 +29,14 @@ MACD_FAST, MACD_SLOW, MACD_SIGNAL = 12, 26, 9
 EMA_SEP_MIN_PCT = 0.6
 
 MIN_BARS_REQUIRED = TREND_EMA + TREND_SMA  # EMA100 + its SMA need this much warm-up
+
+# How many calendar days old the ARM CYCLE (the EMA9/30 crossover bar) is
+# allowed to be, relative to the bar being evaluated. NOT the same thing as
+# the freshness guard below (which checks the TRIGGER bar, i.e. entry_signal
+# itself). 3 days comfortably survives a Friday crossover carrying into a
+# Monday trigger (3 calendar days apart) without letting a crossover from
+# last week or earlier stay armed indefinitely — see check_entry's docstring.
+MAX_ARM_CYCLE_AGE_DAYS = 3
 
 
 def build_indicators(df: pd.DataFrame) -> pd.DataFrame:
@@ -86,10 +95,21 @@ def check_entry(df: pd.DataFrame, used_arm_cycles: set[str] = frozenset(),
     repeatedly within the same armed session (mirrors Pine's setupArmed being consumed
     on entry).
 
-    today (a date, IST) restricts entries to arm cycles from TODAY only — without this,
-    a bullish crossover from a PREVIOUS day that never got a bearish crossunder since
-    stays "armed" indefinitely. Real bug hit in production on the sibling bots
-    (2026-07-14), ported here as a permanent guard, not a one-off fix."""
+    today (the timestamp of the bar being evaluated, IST) bounds how stale the ARM
+    CYCLE (the EMA9/30 crossover bar) is allowed to be — without this, a bullish
+    crossover from a PREVIOUS day that never got a bearish crossunder since stays
+    "armed" indefinitely, and could fire a "fresh" entry_signal transition weeks
+    later using that stale precondition. Real bug hit in production on the sibling
+    bots (2026-07-14), ported here as a permanent guard.
+
+    2026-08-13 correction: this used to require the arm cycle be from THE EXACT
+    SAME calendar day as the trigger bar — but the trigger bar itself is already
+    guaranteed fresh by the signal_not_fresh check above (entry_signal just turned
+    True on THIS bar). Requiring the crossover ALSO be same-day was stricter than
+    the original bug needed and blocked real, valid trades whose crossover simply
+    happened the previous trading day (confirmed live: ASTRAL and NETWEB both had
+    a 1-day-old crossover with a genuinely fresh trigger this morning, and got
+    wrongly rejected). Now bounded by MAX_ARM_CYCLE_AGE_DAYS instead of same-day."""
     if len(df) < MIN_BARS_REQUIRED:
         return EntryCheck(False, None, float(df["Close"].iloc[-1]) if len(df) else 0.0, "insufficient_history")
 
@@ -109,8 +129,9 @@ def check_entry(df: pd.DataFrame, used_arm_cycles: set[str] = frozenset(),
         return EntryCheck(False, last["arm_cycle_id"], close, "signal_not_fresh")
 
     if today is not None and pd.notna(last["arm_cycle_id"]):
-        if pd.Timestamp(last["arm_cycle_id"]).date() != today.date():
-            return EntryCheck(False, last["arm_cycle_id"], close, "arm_cycle_not_today")
+        age_days = (today.date() - pd.Timestamp(last["arm_cycle_id"]).date()).days
+        if age_days > MAX_ARM_CYCLE_AGE_DAYS:
+            return EntryCheck(False, last["arm_cycle_id"], close, "arm_cycle_stale")
 
     arm_id_str = str(last["arm_cycle_id"]) if pd.notna(last["arm_cycle_id"]) else None
     if arm_id_str is not None and arm_id_str in used_arm_cycles:
