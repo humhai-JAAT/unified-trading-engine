@@ -25,9 +25,10 @@ Streamlit Cloud app process (admin app; separate viewer app deployment planned)
 
 **Goal:** know today's %-change for every stock in the biggest universe
 (`bot_400` = Nifty500 minus Nifty100, ~400 stocks) exactly once per cycle,
-then let both universe-bots derive their own top-50 from it without any
-further API calls. **Redefined 2026-08-11** (was Total Market, ~751 stocks —
-see PRD.md for the trade-off this cut accepted).
+then let both universe-bots derive their own top-N (`gainers_pool_size`,
+default **25** as of 2026-08-13, was 50) from it without any further API
+calls. **Redefined 2026-08-11** (was Total Market, ~751 stocks — see PRD.md
+for the trade-off this cut accepted).
 
 ```
 ~400 stocks split into chunks
@@ -46,9 +47,9 @@ Final rank list (all ~400 stocks, ranked by % change)
         ▼ (in-memory, shared read-only for the rest of this cycle)
 Temp space — ranking data
         │
-        ├─▶ bot_400 filters: take top-50 directly
+        ├─▶ bot_400 filters: take top-N (gainers_pool_size, default 25) directly
         └─▶ bot_300 filters: keep only symbols in the (Nifty500 − Nifty200)
-                constituent set, then take top-50 of what's left
+                constituent set, then take top-N of what's left
 ```
 
 **Fallback (chunk-level, not whole-list):** if any one chunk-fetch fails, ONLY
@@ -73,9 +74,13 @@ calculation exactly once per unique symbol per cycle, no matter how many of the
 8 variants need it.
 
 ```
-bot_300 top-50  ┐
-bot_400 top-50  ┴──▶ MERGE + DEDUPLICATE ──▶ unique symbol set (typically ~70-90,
-                                              fewer than 2×50=100 due to overlap)
+bot_300 top-N  ┐
+bot_400 top-N  ┴──▶ MERGE + DEDUPLICATE ──▶ unique symbol set (fewer than 2×N due
+                                              to overlap between the two universes —
+                                              at the 2026-08-13 default N=25 this is
+                                              roughly half the fetch volume of the
+                                              old N=50 default, projected not yet
+                                              live-remeasured)
                                                         │
                                                         ▼
                         Parallel fetch, same per-account lock pattern as Stage 1
@@ -89,7 +94,7 @@ bot_400 top-50  ┴──▶ MERGE + DEDUPLICATE ──▶ unique symbol set (ty
                         read-only for the rest of this cycle)
                                                         │
                         ▼ each variant reads only the symbols in its own universe-
-                          bot's top-50 — 2 universe-bots × 4 variants each = 8
+                          bot's top-N — 2 universe-bots × 4 variants each = 8
                           independent strategy-checks, zero redundant fetching
 ```
 

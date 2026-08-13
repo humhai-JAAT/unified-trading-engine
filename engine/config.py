@@ -60,7 +60,10 @@ DEFAULTS = {
     "wake_time": "09:00",
     "sleep_time": "16:00",
     "square_off_time": "15:15",
-    "gainers_pool_size": 50,         # per universe-bot, after Stage 1 filtering
+    "gainers_pool_size": 25,         # per universe-bot, after Stage 1 filtering — lowered
+                                      # from 50 on 2026-08-13 to cut Stage 2's candle-fetch
+                                      # volume (faster entry-scan cadence), trading off a
+                                      # narrower candidate set — see memory.md
     "stage1_scan_interval_minutes": 5,   # aligned to 5-min candle boundaries (Stage 1 only)
     "position_management_interval_minutes": 2,  # open-position monitoring stays fast
     "atr_period": 14,

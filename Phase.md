@@ -714,3 +714,22 @@ touching code:**
   throughout and used for the live verification instead. Not investigated
   further this session; worth a look if Angel One (the fallback broker)
   keeps doing this.
+
+**Same day, immediately after — `gainers_pool_size` (top-N per universe-bot
+in Stage 1's filter) lowered from 50 to 25**, at the user's request, as a
+direct mitigation for the FLUOROCHEM-type cadence problem earlier this
+session (Stage 2's candle-fetch volume roughly halves, since it fetches
+candles only for the merged/deduped top-N of both universe-bots).
+**Trade-off, explained to and accepted by the user before implementing**:
+narrower candidate set — a real mover that wasn't in the top-25 %-gainers at
+the exact scan moment (but would have been in the top-50) is now invisible
+to the entry scan. Root cause of yesterday's specific miss was Groww being
+rate-limited, not fetch volume per se, so this doesn't fix that exact
+incident — it's a general cadence-margin improvement. Pure config-default
+change (`engine/config.py`'s `DEFAULTS["gainers_pool_size"]`) — the Stage
+1/2/dashboard code was already fully generic on this value (confirmed via a
+full-codebase grep before changing anything), so no other code needed to
+change. Updated the "top-50" mentions in Architecture.md/PRD.md/
+dashboard_view.py that had drifted into describing it as if it were a fixed
+constant rather than the tunable setting it's always been. 78/78 tests still
+pass (none hardcoded 50).

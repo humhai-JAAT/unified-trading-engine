@@ -72,11 +72,13 @@ dashboard — not 8 separate deployments.
 Fetch today's %-change for all ~400 `bot_400`-universe stocks ONCE per cycle,
 split across parallel workers (across multiple broker accounts — see
 Architecture.md), merge + sort into one ranked list. Both universe-bots
-derive their own top-50 by filtering this ONE shared list down to their own
-subset — no per-universe API calls.
+derive their own top-N (`gainers_pool_size`, default **25** as of 2026-08-13,
+was 50 — lowered to cut Stage 2's fetch volume and tighten entry-scan
+cadence) by filtering this ONE shared list down to their own subset — no
+per-universe API calls.
 
 **Stage 2 — candle history (for the actual EMA/MACD signal check):**
-Merge both universe-bots' top-50 lists, remove duplicate symbols, fetch 5-min
+Merge both universe-bots' top-N lists, remove duplicate symbols, fetch 5-min
 candle history ONLY for that deduplicated set (parallel, same multi-account
 pattern), share the result across whichever of the 8 variants need each symbol.
 

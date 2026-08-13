@@ -5,7 +5,7 @@ Architecture.md/design.md, not cosmetic additions:
 
   render_warning_banner() — Stage 1/2 fallback usage or partial-fetch failures
   MUST be visible here, not just logged. A silent partial dataset producing a
-  wrong/incomplete top-50 or candle-set was one of the 5 architecture bugs
+  wrong/incomplete top-N or candle-set was one of the 5 architecture bugs
   this project's design explicitly guards against.
 
   render_account_health() — since this project spans multiple broker accounts
