@@ -130,11 +130,28 @@ if public_variant != _public_current:
 st.sidebar.caption("Controls what the separate read-only Viewer app shows — visitors there can't pick their own.")
 
 st.sidebar.divider()
+st.sidebar.markdown("### 🔍 Stock Pool Size")
+# Pulled out of the Strategy Settings expander (2026-08-13, user request) into
+# its own always-visible control that applies immediately — same auto-save
+# pattern as the Public Viewer selector above, no separate Save click needed
+# just to change how many stocks the bot scans.
+pool_size = st.sidebar.number_input(
+    "Top-N gainers per universe-bot", min_value=5, max_value=100, step=5,
+    value=int(settings["gainers_pool_size"]),
+    help="How many top %-gainers Stage 1 hands to each universe-bot (bot_300, bot_400) "
+         "for entry scanning. Lower = fewer Stage 2 candle fetches (faster entry-scan "
+         "cadence) but a narrower candidate set — a real mover outside this rank at scan "
+         "time won't be checked for a signal.",
+)
+if pool_size != settings["gainers_pool_size"]:
+    config.save_settings({**settings, "gainers_pool_size": pool_size})
+    st.sidebar.success(f"Pool size updated to {pool_size}. Applies from the next entry-scan cycle.")
+    st.rerun()
+
+st.sidebar.divider()
 with st.sidebar.expander("⚙️ Strategy Settings", expanded=False):
     capital = st.number_input("Capital per Variant (₹)", min_value=1000, step=1000,
                                value=int(settings["starting_capital"]))
-    pool_size = st.number_input("Top-N Pool Size (per universe-bot)", min_value=5, max_value=100, step=5,
-                                 value=int(settings["gainers_pool_size"]))
     target_pct = st.number_input("Fixed Target % (trailing-activation trigger)", min_value=0.5, max_value=50.0,
                                   step=0.5, value=float(settings["profit_target_pct"]))
     sl_pct = st.number_input("Fixed Stop-Loss %", min_value=0.5, max_value=50.0, step=0.5,
@@ -149,7 +166,7 @@ with st.sidebar.expander("⚙️ Strategy Settings", expanded=False):
 
     if st.button("💾 Save Settings", use_container_width=True):
         new_settings = {
-            **settings, "starting_capital": capital, "gainers_pool_size": pool_size,
+            **settings, "starting_capital": capital,
             "profit_target_pct": target_pct, "stop_loss_pct": sl_pct,
             "atr_period": atr_period, "atr_multiplier": atr_multiplier,
             "wake_time": wake_time, "sleep_time": sleep_time, "square_off_time": square_off_time,
