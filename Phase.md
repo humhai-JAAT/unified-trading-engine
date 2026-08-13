@@ -716,12 +716,14 @@ touching code:**
   keeps doing this.
 
 **Same day, immediately after — `gainers_pool_size` (top-N per universe-bot
-in Stage 1's filter) lowered from 50 to 25**, at the user's request, as a
-direct mitigation for the FLUOROCHEM-type cadence problem earlier this
-session (Stage 2's candle-fetch volume roughly halves, since it fetches
-candles only for the merged/deduped top-N of both universe-bots).
+in Stage 1's filter) lowered from 50 to 30**, at the user's request (first
+asked for 25, then corrected to 30 after a typo in my own confirmation
+question read back as "5" and prompted a re-check), as a direct mitigation
+for the FLUOROCHEM-type cadence problem earlier this session (Stage 2's
+candle-fetch volume drops, since it fetches candles only for the
+merged/deduped top-N of both universe-bots).
 **Trade-off, explained to and accepted by the user before implementing**:
-narrower candidate set — a real mover that wasn't in the top-25 %-gainers at
+narrower candidate set — a real mover that wasn't in the top-30 %-gainers at
 the exact scan moment (but would have been in the top-50) is now invisible
 to the entry scan. Root cause of yesterday's specific miss was Groww being
 rate-limited, not fetch volume per se, so this doesn't fix that exact

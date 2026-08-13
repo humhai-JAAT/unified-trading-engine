@@ -26,7 +26,7 @@ Streamlit Cloud app process (admin app; separate viewer app deployment planned)
 **Goal:** know today's %-change for every stock in the biggest universe
 (`bot_400` = Nifty500 minus Nifty100, ~400 stocks) exactly once per cycle,
 then let both universe-bots derive their own top-N (`gainers_pool_size`,
-default **25** as of 2026-08-13, was 50) from it without any further API
+default **30** as of 2026-08-13, was 50) from it without any further API
 calls. **Redefined 2026-08-11** (was Total Market, ~751 stocks — see PRD.md
 for the trade-off this cut accepted).
 
@@ -47,7 +47,7 @@ Final rank list (all ~400 stocks, ranked by % change)
         ▼ (in-memory, shared read-only for the rest of this cycle)
 Temp space — ranking data
         │
-        ├─▶ bot_400 filters: take top-N (gainers_pool_size, default 25) directly
+        ├─▶ bot_400 filters: take top-N (gainers_pool_size, default 30) directly
         └─▶ bot_300 filters: keep only symbols in the (Nifty500 − Nifty200)
                 constituent set, then take top-N of what's left
 ```
@@ -77,8 +77,8 @@ calculation exactly once per unique symbol per cycle, no matter how many of the
 bot_300 top-N  ┐
 bot_400 top-N  ┴──▶ MERGE + DEDUPLICATE ──▶ unique symbol set (fewer than 2×N due
                                               to overlap between the two universes —
-                                              at the 2026-08-13 default N=25 this is
-                                              roughly half the fetch volume of the
+                                              at the 2026-08-13 default N=30 this is
+                                              somewhat less fetch volume than the
                                               old N=50 default, projected not yet
                                               live-remeasured)
                                                         │

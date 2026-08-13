@@ -72,7 +72,7 @@ dashboard — not 8 separate deployments.
 Fetch today's %-change for all ~400 `bot_400`-universe stocks ONCE per cycle,
 split across parallel workers (across multiple broker accounts — see
 Architecture.md), merge + sort into one ranked list. Both universe-bots
-derive their own top-N (`gainers_pool_size`, default **25** as of 2026-08-13,
+derive their own top-N (`gainers_pool_size`, default **30** as of 2026-08-13,
 was 50 — lowered to cut Stage 2's fetch volume and tighten entry-scan
 cadence) by filtering this ONE shared list down to their own subset — no
 per-universe API calls.
