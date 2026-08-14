@@ -57,10 +57,10 @@ def build_indicators(df: pd.DataFrame) -> pd.DataFrame:
     bull_cross = (out["ema_fast"] > out["ema_slow"]) & (out["ema_fast"].shift(1) <= out["ema_slow"].shift(1))
     bear_cross = (out["ema_fast"] < out["ema_slow"]) & (out["ema_fast"].shift(1) >= out["ema_slow"].shift(1))
 
-    arm_signal = pd.Series(pd.NA, index=out.index, dtype="object")
-    arm_signal[bull_cross] = True
-    arm_signal[bear_cross] = False
-    out["armed"] = arm_signal.ffill().fillna(False).astype(bool)
+    arm_signal = pd.Series(float("nan"), index=out.index, dtype="float64")
+    arm_signal[bull_cross] = 1.0
+    arm_signal[bear_cross] = 0.0
+    out["armed"] = arm_signal.ffill().fillna(0.0).astype(bool)
 
     # Timestamp of the bull-cross bar that produced the *current* armed state —
     # used to make sure we only take one entry per arm cycle (mirrors Pine's
