@@ -673,3 +673,42 @@ code alone never would have surfaced — the SAME lesson from three separate
 the universe-redefinition work earlier the same calendar day — this was
 technically the NEXT trading session). See Phase.md for the complete
 numbered bug list and exact fix details.
+
+## 2026-08-14 — Live incident: every entry_scan cycle crashing since market open
+
+Resumed the project by checking `ute_cycle_log` directly (established
+discipline: check real production state before assuming anything is fine).
+Found every `entry_scan` cycle since today's market open (09:17 through
+10:11 IST, 13 in a row) had failed with `RecursionError: maximum recursion
+depth exceeded` — **zero entry scanning happened all morning**, even though
+`position_management` cycles (every ~2 min) kept running fine, so existing
+open positions were still being monitored throughout.
+
+Root cause, found by construction rather than a live-reproduced traceback
+(a local repro against real broker data via `scheduler.run_full_scan_cycle()`
+did NOT crash — different pandas version than whatever Streamlit Cloud has
+installed off the unpinned `pandas>=2.0.0` in `requirements.txt`, most
+likely): `strategy.build_indicators()`'s `arm_signal` column was built as an
+**object-dtype `pd.Series` seeded with `pd.NA`**, then `.ffill()`'d — this
+line was throwing a `FutureWarning` ("Downcasting object dtype arrays on
+.fillna/.ffill/.bfill is deprecated") on every single call, a live clue that
+had been silently accumulating in logs without anyone connecting it to a
+crash risk. This is a known-fragile pandas pattern (object dtype + `pd.NA`
++ `ffill`) — some pandas versions hit pathological/recursive internal
+handling on it for long series.
+
+**Fixed**: rewrote `arm_signal` as a plain `float64` Series (`nan`/`1.0`/
+`0.0`) instead of `object`/`pd.NA` — functionally identical after
+`.ffill().astype(bool)`, routes through pandas' fast numeric path instead
+of the object-dtype one. FutureWarning gone, 78/78 tests still pass, local
+full-cycle repro clean. Commit
+[8d002db](https://github.com/humhai-JAAT/unified-trading-engine/commit/8d002db),
+pushed to `main`.
+
+**Standing reminder this re-confirms**: a `git push` to `main` auto-
+redeploys the Streamlit Cloud admin app, which resets the in-process
+APScheduler — **the user must click "Start" in the sidebar again** after
+this deploy lands, or the fix will sit there unused. Not yet confirmed live
+in production as of writing this — next thing to check when resuming: did
+the next `entry_scan` cycle after redeploy succeed (`status='OK'`, no more
+`RecursionError`)?
