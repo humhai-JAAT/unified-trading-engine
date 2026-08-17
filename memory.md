@@ -712,3 +712,66 @@ this deploy lands, or the fix will sit there unused. Not yet confirmed live
 in production as of writing this — next thing to check when resuming: did
 the next `entry_scan` cycle after redeploy succeed (`status='OK'`, no more
 `RecursionError`)?
+
+**Update 2026-08-17 — the object-dtype/pd.NA fix above did NOT actually
+resolve it.** Checked `ute_cycle_log` fresh on 08-17: `entry_scan` was
+still failing with the identical `RecursionError: maximum recursion depth
+exceeded` on almost every single cycle, all the way through market close
+(last one at 15:26:56). A local repro via `scheduler.run_full_scan_cycle()`
+against real broker data still does NOT crash locally, so the exact
+trigger remains unroot-caused — most likely explained by Streamlit Cloud
+installing a different pandas version than local dev, since
+`requirements.txt` had `pandas>=2.0.0` unpinned.
+
+**Fixed differently this time — isolate instead of root-cause-blind-guess**:
+`variant_engine.scan_for_entry()` now wraps each symbol's
+`strategy.check_entry()` call in its own try/except (commit
+[7c1ef36](https://github.com/humhai-JAAT/unified-trading-engine/commit/7c1ef36)).
+Before this, ANY symbol crashing aborted `run_full_scan_cycle()` entirely —
+all 8 variants, every other symbol, for that whole cycle, zero entries
+scanned. Now a crash is caught per-symbol, recorded as
+`"error: <ExceptionType>: <msg>"` on that candidate, and surfaced into the
+cycle log's `warnings` column (`scheduler.py`'s `strategy_warnings`
+aggregation) — so the NEXT time this recurs, the DB itself will show
+exactly which symbol/variant triggered it, without needing access to
+Streamlit Cloud's own console logs (which this session never got — the
+user only shared Groww API credentials for an unrelated investigation,
+see below). Also pinned `pandas==2.3.3` in `requirements.txt` (was
+unpinned) to remove the local/prod version mismatch as a variable for any
+future repro attempt. 80/80 tests pass (2 new, `tests/test_scan_for_entry_
+resilience.py`, proving a crash on one symbol doesn't starve the rest of
+the scan or block a later real entry signal in the same cycle).
+
+**How to apply**: this does NOT claim the RecursionError's root cause is
+fixed — it claims the BLAST RADIUS is now contained, and the next
+occurrence will self-diagnose via the warnings column instead of needing
+another guessing session. First thing to check when resuming: query
+`ute_cycle_log` for `stage='entry_scan'` rows with a non-empty `warnings`
+containing `"error: RecursionError"` — that pinpoints the exact
+symbol/variant to investigate directly (e.g. replay that exact candle
+data through `strategy.check_entry()` locally).
+
+**Same session — separate investigation, Groww API access issue found**:
+user is provisioning 2 brand-new Groww accounts (with a fresh ₹499/month
+Trading API subscription each) to potentially use as additional Stage 1/2
+accounts. Live-tested both directly (fresh session tokens injected past
+`_get_client()`, bypassing our own rate-limited `get_access_token()` flow)
+against the REAL `stage1_ranking.fetch_ranking_data()` /
+`stage2_candles.fetch_candle_history()` code paths — both accounts get
+`GrowwAPIException: Access forbidden for this request` on every
+`get_ohlc`/`get_historical_candles` call, 100% consistently, even after
+the user confirmed the subscription was active (screenshot showed
+"ONGOING", purchased 2026-08-17). Confirmed via `growwapi` SDK source
+(`client.py`) that these methods do zero client-side validation — the
+403-equivalent is server-side. Leading hypothesis (not yet confirmed):
+the ₹499/month "Trading API" plan may cover order-placement APIs only,
+not a separate "Market Data" entitlement — needs comparing the ORIGINAL,
+working `groww_1` production account's exact subscription/plan page
+against these 2 new ones to find the actual difference. Could NOT
+cleanly test whether market-hours-closed was a factor (user's
+hypothesis) — the original account's own token-rate-limit was blocking
+auth at test time, and the 2 new tokens have only ever been tested after
+market close. **Next step, needs market-open hours**: retest the exact
+same 2 new-account tokens (long-lived, won't expire by next session)
+during live market hours to conclusively rule out the closed-market
+theory before pursuing the subscription-type theory further.
