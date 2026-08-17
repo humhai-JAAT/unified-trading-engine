@@ -190,7 +190,13 @@ def run_full_scan_cycle(settings: dict | None = None) -> dict:
                         top_lists[universe_bot["key"]], stage2_result.candles_by_symbol, was_flat,
                     )
 
-            all_warnings = stage1_result.warnings + subset_warnings + stage2_result.warnings
+            strategy_warnings = [
+                f"{variant_id}/{c['symbol']}: {c['reason']}"
+                for variant_id, result in scan_results.items()
+                for c in result.get("candidates", [])
+                if isinstance(c.get("reason"), str) and c["reason"].startswith("error:")
+            ]
+            all_warnings = stage1_result.warnings + subset_warnings + stage2_result.warnings + strategy_warnings
             entered = [v for v, r in scan_results.items() if r.get("action") == "enter"]
             db.log_cycle(
                 status="OK", stage="entry_scan",

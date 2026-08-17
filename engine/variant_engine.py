@@ -268,8 +268,20 @@ def scan_for_entry(universe_bot_key: str, variant_cfg: dict, settings: dict, now
             candidates_checked.append({"symbol": symbol, "signal": False, "reason": "no_candle_data"})
             continue
 
-        used_arm_cycles = db.get_arm_cycles_used_today(variant_id, symbol)
-        check = strategy.check_entry(candle_df, used_arm_cycles=used_arm_cycles, today=now)
+        try:
+            used_arm_cycles = db.get_arm_cycles_used_today(variant_id, symbol)
+            check = strategy.check_entry(candle_df, used_arm_cycles=used_arm_cycles, today=now)
+        except Exception as e:
+            # 2026-08-17: check_entry has been crashing the ENTIRE cycle (all 8
+            # variants, every symbol) with an intermittent, still-unroot-caused
+            # RecursionError — isolating it to just this one symbol so the rest
+            # of the scan survives, and surfacing exactly which symbol/variant
+            # triggered it (see scheduler.py's warnings aggregation) instead of
+            # losing that breadcrumb the way the old whole-cycle crash did.
+            logger.error(f"check_entry crashed for {variant_id}/{symbol}: {type(e).__name__}: {e}")
+            candidates_checked.append({"symbol": symbol, "signal": False,
+                                        "reason": f"error: {type(e).__name__}: {e}"})
+            continue
         candidates_checked.append({"symbol": symbol, "signal": bool(check.signal), "reason": check.reason})
 
         if check.signal:
