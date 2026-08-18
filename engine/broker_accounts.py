@@ -62,6 +62,25 @@ def _jwt_exp_timestamp(token: str) -> float | None:
         logger.warning(f"Could not decode JWT exp claim: {e}")
         return None
 
+def _http_error_detail(e: "requests.exceptions.HTTPError") -> str:
+    """requests' raise_for_status() raises BEFORE the response body is ever
+    read, so the generic '403 Client Error: Forbidden for url: ...' message
+    is all that normally reaches the logs/DB warnings - Angel One's own
+    error body (which usually has a real message/errorcode explaining WHY,
+    e.g. a specific permission or session error) gets silently discarded.
+    2026-08-18: this is exactly what was missing while root-causing a batch
+    of candle-fetch 403s that didn't match the account's own successful
+    quote-fetch calls moments earlier - pulls the body back out so the next
+    occurrence is self-diagnosing from the DB alone."""
+    resp = e.response
+    if resp is None:
+        return str(e)
+    try:
+        return f"{e} | body: {resp.json()}"
+    except Exception:
+        return f"{e} | body: {resp.text[:300]}"
+
+
 ANGELONE_QUOTE_RATE_SECONDS = 1.1     # Angel One quote API: 1 req/sec + buffer
 ANGELONE_CANDLE_RATE_SECONDS = 0.4    # Angel One candle API: 3 req/sec + buffer
 GROWW_QUOTE_RATE_SECONDS = 0.05       # Groww quote/OHLC: ~25 req/sec + buffer
@@ -179,6 +198,9 @@ class AngelOneAccount(BrokerAccount):
             self._jwt_token = payload["data"]["jwtToken"]
             self._logged_in_at = time.time()
             return True
+        except requests.exceptions.HTTPError as e:
+            logger.warning(f"[{self.account_id}] Angel One login request failed: {_http_error_detail(e)}")
+            return False
         except Exception as e:
             logger.warning(f"[{self.account_id}] Angel One login request failed: {e}")
             return False
@@ -248,6 +270,9 @@ class AngelOneAccount(BrokerAccount):
                         continue
                     pct_change = (ltp - close) / close * 100
                     results.append(QuoteResult(symbol=symbol, last_price=float(ltp), pct_change=float(pct_change)))
+            except requests.exceptions.HTTPError as e:
+                logger.warning(f"[{self.account_id}] quote batch request failed: {_http_error_detail(e)}")
+                continue
             except Exception as e:
                 logger.warning(f"[{self.account_id}] quote batch request failed: {e}")
                 continue
@@ -289,6 +314,12 @@ class AngelOneAccount(BrokerAccount):
             resp.raise_for_status()
             payload = resp.json()
             if not payload.get("status"):
+                # A 200 OK with status:false was previously discarded silently -
+                # Angel One's own message/errorcode here is the same kind of
+                # detail _http_error_detail() recovers for the raise_for_status()
+                # path below, just reached via a different route (2026-08-18).
+                logger.warning(f"[{self.account_id}] candle fetch for {symbol} returned status:false "
+                                f"| message: {payload.get('message')} | errorcode: {payload.get('errorcode')}")
                 return None
             rows = payload.get("data") or []
             if not rows:
@@ -298,6 +329,9 @@ class AngelOneAccount(BrokerAccount):
             df = df.set_index("Datetime")
             df.index = df.index.tz_convert(IST) if df.index.tz is not None else df.index.tz_localize(IST)
             return df
+        except requests.exceptions.HTTPError as e:
+            logger.warning(f"[{self.account_id}] candle fetch failed for {symbol}: {_http_error_detail(e)}")
+            return None
         except Exception as e:
             logger.warning(f"[{self.account_id}] candle fetch failed for {symbol}: {e}")
             return None
