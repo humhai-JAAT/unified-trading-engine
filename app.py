@@ -202,6 +202,18 @@ def live_panel():
 live_panel()
 
 st.divider()
+st.subheader("📊 Variant Scoreboard")
+st.caption("All 8 variants compared side by side — see which ones are actually earning their keep.")
+
+
+@st.fragment(run_every=dashboard_view.get_refresh_interval())
+def scoreboard_panel():
+    dashboard_view.render_variant_scoreboard(settings)
+
+
+scoreboard_panel()
+
+st.divider()
 st.subheader("Latest Cycle Log")
 logs = db.get_cycle_logs(limit=20)
 if logs.empty:

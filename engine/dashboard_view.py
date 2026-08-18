@@ -190,6 +190,51 @@ def render_account_health() -> None:
     st.markdown(f'<div class="ute-chip-row">{chips}</div>', unsafe_allow_html=True)
 
 
+def render_variant_scoreboard(settings: dict) -> None:
+    """All 8 variants' metrics side by side, ranked by SQN — added 2026-08-18
+    to close a real gap: the project ran 8 near-identical variants in
+    parallel but had no view that let you tell which ones actually earn
+    their keep, only the single-variant panel below (see
+    engine.metrics.get_variant_rankings's docstring). Win Rate is shown next
+    to its Wilson-lower-bound counterpart deliberately — with few trades the
+    naive number reads as more confident than it is (e.g. 3/3 wins shows
+    100% naive vs ~44% Wilson), and that gap is the whole point of showing
+    both until more trades accumulate. Admin-only (not in viewer_app.py) —
+    it would leak comparative performance across variants the admin hasn't
+    chosen to make public."""
+    df = metrics.get_variant_rankings(settings)
+    if df["total_trades"].sum() == 0:
+        st.info("ℹ️ No closed trades yet for any variant — the scoreboard fills in once trades start closing.")
+        return
+
+    display = df.copy()
+    display["profit_factor"] = display["profit_factor"].apply(lambda x: "∞" if x == float("inf") else f"{x:.2f}")
+    st.dataframe(
+        display,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "variant_id": st.column_config.TextColumn("Variant"),
+            "universe_bot": None,
+            "variant": None,
+            "total_trades": st.column_config.NumberColumn("Trades"),
+            "win_rate_pct": st.column_config.NumberColumn("Win Rate %", format="%.1f"),
+            "wilson_win_rate_pct": st.column_config.NumberColumn("Win Rate % (Wilson LB)", format="%.1f"),
+            "profit_factor": st.column_config.TextColumn("Profit Factor"),
+            "sqn": st.column_config.NumberColumn("SQN", format="%.2f"),
+            "expectancy": st.column_config.NumberColumn("Expectancy (₹)", format="%.0f"),
+            "total_pnl": st.column_config.NumberColumn("Total P&L (₹)", format="%.0f"),
+            "total_pnl_pct": st.column_config.NumberColumn("Total P&L %", format="%.1f"),
+            "max_drawdown": st.column_config.NumberColumn("Max Drawdown (₹)", format="%.0f"),
+        },
+    )
+    st.caption(
+        "Ranked by SQN (System Quality Number — rewards a consistent edge over raw trade count). "
+        "Wilson LB win rate is a conservative estimate that discounts small samples; trust it over "
+        "the naive Win Rate % until a variant has a real trade count behind it."
+    )
+
+
 def render_variant_panel(universe_bot_key: str, variant_cfg: dict, settings: dict,
                           show_force_exit: bool = False) -> None:
     variant_id = f"{universe_bot_key}/{variant_cfg['key']}"
