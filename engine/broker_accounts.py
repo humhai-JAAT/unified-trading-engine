@@ -566,8 +566,11 @@ def _env(prefix: str, suffix: str) -> str | None:
 def get_configured_accounts() -> dict[str, list[BrokerAccount]]:
     """Returns {'angelone': [...], 'groww': [...]} — only accounts with complete
     credentials are included. Numbered ANGELONE_1_*/ANGELONE_2_*/GROWW_1_*/
-    GROWW_2_* env vars (or Streamlit secrets, which app.py loads into os.environ
-    the same way the sibling bots do for DATABASE_URL/ANGELONE_*)."""
+    GROWW_2_*/GROWW_3_* env vars (or Streamlit secrets, which app.py loads into
+    os.environ the same way the sibling bots do for DATABASE_URL/ANGELONE_*).
+    GROWW_3 added 2026-08-18 while evaluating 2 additional Groww accounts
+    alongside the existing production one — still under evaluation, see
+    memory.md, not yet confirmed as a permanent 3-account setup."""
     angelone_accounts = []
     for n in (1, 2):
         prefix = f"ANGELONE_{n}"
@@ -582,7 +585,7 @@ def get_configured_accounts() -> dict[str, list[BrokerAccount]]:
             angelone_accounts.append(acct)
 
     groww_accounts = []
-    for n in (1, 2):
+    for n in (1, 2, 3):
         prefix = f"GROWW_{n}"
         acct = GrowwAccount(
             account_id=f"groww_{n}",
