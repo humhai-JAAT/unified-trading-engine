@@ -106,6 +106,45 @@ def test_get_client_ignores_an_expired_cached_token(mock_groww_api, mock_totp, t
     mock_groww_api.assert_called_once_with("fresh-token")
 
 
+@patch("pyotp.TOTP")
+@patch("growwapi.GrowwAPI")
+def test_get_client_serializes_concurrent_callers_into_one_auth_call(mock_groww_api, mock_totp, tmp_path):
+    """2026-08-18 live finding: WORKERS_PER_ACCOUNT=3 (stage1_ranking.py)
+    means up to 3 threads can call _get_client() concurrently on every cold
+    cache. Without a lock, all 3 raced to call get_access_token() with the
+    SAME TOTP code at once - live-observed as Groww's server rejecting the
+    simultaneous/duplicate requests with a 400 Bad Request, 6 times in the
+    same second once a 2nd Groww account doubled the concurrent worker
+    count. Only the first concurrent caller should ever reach
+    get_access_token(); the rest must block and then reuse its result."""
+    import threading
+    import time as time_module
+
+    mock_totp.return_value.now.return_value = "123456"
+
+    def slow_get_access_token(*args, **kwargs):
+        time_module.sleep(0.05)  # widen the race window
+        return "fake-token"
+
+    mock_groww_api.get_access_token.side_effect = slow_get_access_token
+
+    account = _isolated_account(tmp_path, api_key="key", totp_secret="SECRETSEED")
+    results = []
+
+    def call():
+        results.append(account._get_client())
+
+    threads = [threading.Thread(target=call) for _ in range(5)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert mock_groww_api.get_access_token.call_count == 1
+    assert len(results) == 5
+    assert all(r is not None for r in results)
+
+
 def test_is_configured_true_with_either_auth_method():
     assert GrowwAccount(account_id="g", api_key="key", totp_secret="s").is_configured() is True
     assert GrowwAccount(account_id="g", api_key="key", api_secret="s").is_configured() is True

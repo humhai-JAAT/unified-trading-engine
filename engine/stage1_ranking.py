@@ -19,7 +19,15 @@ from engine.broker_accounts import BrokerAccount, QuoteResult, get_configured_ac
 
 logger = get_logger(__name__)
 
-WORKERS_PER_ACCOUNT = 3
+# 2026-08-18: lowered 3 -> 2. With 2 Groww accounts configured (2*3=6 total
+# workers), 400 symbols split into 6 uneven chunks (67,67,67,67,66,66) - each
+# chunk >50 needs 2 Groww API calls (GROWW_QUOTE_BATCH_SIZE), so 6 workers
+# meant 12 total Groww calls per cycle. At 2 workers/account (4 total), 400
+# splits evenly into 4x100, and each chunk needs exactly 2 calls (100/50) -
+# 8 total, a real ~33% cut in Groww load, not just a rounding preference.
+# Also shrinks how many threads can race on GrowwAccount._get_client()'s
+# lock (see broker_accounts.py) on every cold-cache cycle.
+WORKERS_PER_ACCOUNT = 2
 
 
 @dataclass

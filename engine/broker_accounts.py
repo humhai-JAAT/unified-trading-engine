@@ -25,6 +25,7 @@ parse surprise rather than crashing, exactly like the sibling clients do.
 import base64
 import json
 import os
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -370,6 +371,15 @@ class GrowwAccount(BrokerAccount):
         self._totp_secret = totp_secret
         self._client = None
         self._client_expires_at = 0.0  # real `exp` claim from the token, not a guessed TTL
+        # 2026-08-18: WORKERS_PER_ACCOUNT=3 (stage1_ranking.py) means up to 3
+        # threads can call _get_client() concurrently on every cold cache -
+        # without serializing them, they'd all race to call get_access_token()
+        # with the SAME TOTP code at once. Live-confirmed: adding a 2nd Groww
+        # account doubled the concurrent worker count and both accounts
+        # started failing with "400 Bad Request", 6 times in the same second
+        # (3 workers x 2 accounts) - looks exactly like Groww's server
+        # rejecting simultaneous/duplicate auth requests for one account.
+        self._client_lock = threading.Lock()
         self._instrument_cache_path = PROJECT_ROOT / "data" / f"groww_instrument_master_{account_id}.csv"
         self._token_cache_path = PROJECT_ROOT / "data" / f"groww_token_cache_{account_id}.json"
         super().__init__()
@@ -389,56 +399,65 @@ class GrowwAccount(BrokerAccount):
         if not self.is_configured():
             return None
 
-        try:
-            from growwapi import GrowwAPI  # lazy import — only needed if configured
-        except Exception as e:
-            logger.warning(f"[{self.account_id}] Groww client init failed: {e}")
-            return None
+        # Serialize everything below - see __init__'s comment on why. Only
+        # the first thread through actually hits the network; the rest
+        # block here, then hit the fast-path re-check below and return the
+        # client that thread just obtained instead of racing their own
+        # get_access_token() call against it.
+        with self._client_lock:
+            if self._client is not None and time.time() < self._client_expires_at - GROWW_TOKEN_REFRESH_BUFFER_SECONDS:
+                return self._client
 
-        # Second-level cache: a token another process persisted to disk (this
-        # SAME data/ dir every process on this machine/container shares) may
-        # still be valid — reuse it before calling get_access_token() again.
-        # Live-hit 2026-08-11: get_access_token() has its OWN rate limit,
-        # separate from and stricter than the regular market-data rate limit
-        # (GROWW_QUOTE_RATE_SECONDS etc.) — repeated short-lived script
-        # invocations during a debugging session (each with an empty
-        # in-memory cache) exhausted it and broke the deployed Cloud app's
-        # OWN candle fetches too, since they share one account's budget.
-        cached = self._load_cached_token()
-        if cached is not None:
-            token, exp = cached
-            if time.time() < exp - GROWW_TOKEN_REFRESH_BUFFER_SECONDS:
-                try:
-                    self._client = GrowwAPI(token)
-                    self._client_expires_at = exp
-                    return self._client
-                except Exception as e:
-                    logger.warning(f"[{self.account_id}] Groww client init from cached token failed: {e}")
+            try:
+                from growwapi import GrowwAPI  # lazy import — only needed if configured
+            except Exception as e:
+                logger.warning(f"[{self.account_id}] Groww client init failed: {e}")
+                return None
 
-        try:
-            # GrowwAPI takes a single session token, not (api_key, api_secret) directly —
-            # exchange the api_key for a token first (live-verified 2026-08-09; the
-            # SDK's real constructor signature is `GrowwAPI(token)`). TOTP preferred
-            # over approval/secret — see class docstring.
-            if self._totp_secret:
-                import pyotp
-                totp_code = pyotp.TOTP(self._totp_secret).now()
-                token = GrowwAPI.get_access_token(self._api_key, totp=totp_code)
-            else:
-                token = GrowwAPI.get_access_token(self._api_key, secret=self._api_secret)
-            self._client = GrowwAPI(token)
-            # Groww's token expiry is a FIXED daily wall-clock cutoff (06:00:00 IST),
-            # not N-hours-from-issuance — decode the token's own `exp` rather than
-            # guessing a TTL (live-verified 2026-08-09, see _jwt_exp_timestamp's
-            # docstring). Falls back to a conservative 1-hour assumption if the
-            # token can't be decoded, so a parse surprise degrades, not crashes.
-            exp = _jwt_exp_timestamp(token)
-            self._client_expires_at = exp if exp is not None else time.time() + 3600
-            self._save_cached_token(token, self._client_expires_at)
-        except Exception as e:
-            logger.warning(f"[{self.account_id}] Groww client init failed: {e}")
-            return None
-        return self._client
+            # Second-level cache: a token another process persisted to disk (this
+            # SAME data/ dir every process on this machine/container shares) may
+            # still be valid — reuse it before calling get_access_token() again.
+            # Live-hit 2026-08-11: get_access_token() has its OWN rate limit,
+            # separate from and stricter than the regular market-data rate limit
+            # (GROWW_QUOTE_RATE_SECONDS etc.) — repeated short-lived script
+            # invocations during a debugging session (each with an empty
+            # in-memory cache) exhausted it and broke the deployed Cloud app's
+            # OWN candle fetches too, since they share one account's budget.
+            cached = self._load_cached_token()
+            if cached is not None:
+                token, exp = cached
+                if time.time() < exp - GROWW_TOKEN_REFRESH_BUFFER_SECONDS:
+                    try:
+                        self._client = GrowwAPI(token)
+                        self._client_expires_at = exp
+                        return self._client
+                    except Exception as e:
+                        logger.warning(f"[{self.account_id}] Groww client init from cached token failed: {e}")
+
+            try:
+                # GrowwAPI takes a single session token, not (api_key, api_secret) directly —
+                # exchange the api_key for a token first (live-verified 2026-08-09; the
+                # SDK's real constructor signature is `GrowwAPI(token)`). TOTP preferred
+                # over approval/secret — see class docstring.
+                if self._totp_secret:
+                    import pyotp
+                    totp_code = pyotp.TOTP(self._totp_secret).now()
+                    token = GrowwAPI.get_access_token(self._api_key, totp=totp_code)
+                else:
+                    token = GrowwAPI.get_access_token(self._api_key, secret=self._api_secret)
+                self._client = GrowwAPI(token)
+                # Groww's token expiry is a FIXED daily wall-clock cutoff (06:00:00 IST),
+                # not N-hours-from-issuance — decode the token's own `exp` rather than
+                # guessing a TTL (live-verified 2026-08-09, see _jwt_exp_timestamp's
+                # docstring). Falls back to a conservative 1-hour assumption if the
+                # token can't be decoded, so a parse surprise degrades, not crashes.
+                exp = _jwt_exp_timestamp(token)
+                self._client_expires_at = exp if exp is not None else time.time() + 3600
+                self._save_cached_token(token, self._client_expires_at)
+            except Exception as e:
+                logger.warning(f"[{self.account_id}] Groww client init failed: {e}")
+                return None
+            return self._client
 
     def _load_cached_token(self) -> "tuple[str, float] | None":
         try:
