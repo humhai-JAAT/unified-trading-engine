@@ -876,8 +876,7 @@ an explicit go-ahead before pushing. Saved permanently in the
 not to revert what was already pushed ("jo ho gaya, ho gaya").
 
 **Still open/unresolved as of this update**:
-1. The 2 new Groww accounts' `400 Bad Request` at `get_access_token()` —
-   external to our code, needs Groww support or a credential re-check.
+1. ~~The 2 new Groww accounts' `400 Bad Request`~~ — **SOLVED, see below.**
 2. The original `entry_scan` `RecursionError` — blast radius contained
    (per-symbol crash isolation, 2026-08-17), but the actual trigger is
    still unknown. Next occurrence should self-diagnose via the cycle
@@ -885,7 +884,54 @@ not to revert what was already pushed ("jo ho gaya, ho gaya").
 3. **Production bot has been idle since 2026-08-17 15:56** — every push
    this session redeployed Streamlit Cloud and reset the scheduler, and
    "Start" was never re-clicked. Multiple full trading sessions (all of
-   08-18) went by with zero scanning/monitoring. First thing to check
-   next session: has "Start" been clicked, and if so, is `groww_1` alone
-   (without `GROWW_2` in production) now benefiting from the lock fix +
-   lower worker count without the 2nd-account complication.
+   08-18) went by with zero scanning/monitoring.
+
+## 2026-08-18 (later same day) — SOLVED: the whole day's Groww "400 Bad Request" mystery
+
+**Root cause**: on Groww's TOTP-key-generation page, creating a key gives
+you THREE distinct items — **"API Key" + "Secret"** (a pair for a
+DIFFERENT, approval-based/daily-manual auth flow) and **"TOTP token" +
+"Secret"** (the pair actually needed for the automated TOTP flow this
+project uses). We — both the user copying values and me testing them —
+had been feeding the **"API Key"** value into `get_access_token()`'s
+`api_key` parameter, when the TOTP flow actually needs the **"TOTP
+token"** value there instead. Confirmed via Groww's own docs
+(`groww.in/trade-api/docs/python-sdk`): *"In the TOTP approach, the
+'api_key' parameter actually receives the TOTP token identifier."*
+Live-verified immediately after the swap: both accounts authenticate AND
+fetch real data (quotes + 233-235 candle rows each) on the first try.
+
+**This explains the ENTIRE day's saga** — the original `Access forbidden`
+(days ago, wrong field, but happened to get past a lower-privilege check),
+the newer `400 Bad Request` (wrong field, rejected earlier in the auth
+pipeline), all of it. The thread-safety race condition found+fixed
+earlier today (see above) was REAL and worth keeping, but was never the
+actual blocker for these 2 accounts specifically — it was purely
+credential-field confusion the whole time.
+
+**Also explains why the user's Groww-console key deletion "changed
+nothing"** earlier today — deleting/regenerating the *API Key* (the
+wrong field) was never going to fix an auth call that was reading from
+the wrong field type in the first place.
+
+**Fixed in `.streamlit/secrets.toml`** (local only — not pushed, and not
+yet in production Streamlit Cloud secrets as of this update):
+`GROWW_1_API_KEY`/`GROWW_1_TOTP_SECRET` now hold the corrected TOTP-token
++ secret pair for the `d61cca47...` account (the original production
+account, whose OLD "API Key"-type credential the user deleted at Groww's
+console earlier today — moot now, this account works again with the
+right field). `GROWW_2_API_KEY`/`GROWW_2_TOTP_SECRET` hold the
+`0790ca7a...` account's corrected pair — this is a genuinely NEW, WORKING
+second Groww account now, not a dead end.
+
+**User needs to apply the same fix in production Streamlit Cloud
+secrets** — told them to update `GROWW_1_API_KEY`/`GROWW_1_TOTP_SECRET`
+with the corrected values (given directly in chat) and optionally add
+`GROWW_2_API_KEY`/`GROWW_2_TOTP_SECRET` for the new second account, since
+it's now confirmed genuinely working, not just theoretically wired.
+
+**How to apply for any future Groww account setup on this or a sibling
+project**: always ask specifically for the **"TOTP token"** value (not
+"API Key") when a user pastes Groww credentials from their console —
+both are JWT-shaped and easy to confuse, but only one works for
+`get_access_token(..., totp=...)`.
