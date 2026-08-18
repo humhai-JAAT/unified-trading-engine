@@ -935,3 +935,37 @@ project**: always ask specifically for the **"TOTP token"** value (not
 "API Key") when a user pastes Groww credentials from their console —
 both are JWT-shaped and easy to confuse, but only one works for
 `get_access_token(..., totp=...)`.
+
+**Applying the production secrets fix took 2 tries** — user pasted the
+corrected `GROWW_1_API_KEY` but re-substituted the "API Key"-type JWT
+again on the first attempt (both look identical at a glance; only the
+`exp` timestamp differs, `...4116` vs `...4174`). Live-tested their exact
+pasted value each time before confirming — caught it immediately. Second
+attempt correct. Sent the full corrected `secrets.toml` content as a
+`.txt` file (not just inline chat text) specifically so the user could
+select-all and replace everything at once instead of hand-editing
+individual lines, after the mix-up.
+
+**Production reset + restarted**: user clicked "Start" after applying
+the corrected secrets — but ALSO ran "Reset All Data" (Danger Zone)
+first, so `ute_cycle_log`/`ute_checkpoint_log`/all 8 trades tables are
+now 0 rows (only `ute_settings` has its 1 row, untouched). Matches the
+user's established post-instability pattern (see 2026-08-12 entry
+above) — assumed intentional, not flagged as a bug. **Real proof the
+Groww fix works in production won't exist until market opens
+2026-08-19 09:15 IST** (checked immediately after "Start" — 22:52 IST,
+long after close, so only `MARKET_CLOSED` rows are possible right now).
+
+**Second Angel One account added** (`ANGELONE_2_*`) — `client_code
+A57748999`, straightforward format (unlike Groww, no JWT-field
+confusion risk — Angel One's `API_KEY` is genuinely a short string like
+the existing `ANGELONE_1_API_KEY="FrslXALR"`). Live-verified: login
+succeeds, `fetch_candles("RELIANCE")` returns 219 real rows. Wired into
+local `secrets.toml` only so far — not yet in production, and not yet
+wired into `get_configured_accounts()`'s actual USE (the `for n in (1,
+2)` loop for Angel One already supports 2 accounts natively, no code
+change needed here unlike Groww's `GROWW_3` extension).
+
+**Everything above is committed locally only, per the standing
+no-unprompted-push rule** — check `git log origin/main..HEAD` before
+assuming any of this is deployed.
