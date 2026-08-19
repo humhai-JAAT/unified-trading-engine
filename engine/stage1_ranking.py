@@ -120,8 +120,13 @@ def fetch_ranking_data(symbols: list[str], fallback_accounts: list[BrokerAccount
                 failed_chunks.append((idx, missing))
 
         if failed_chunks and fallback_accounts:
-            fallback_account = fallback_accounts[0]
+            # 2026-08-19: was hardcoded to fallback_accounts[0] only - with a
+            # 2nd Angel One account now configured, round-robin failed chunks
+            # across every configured fallback account instead of hammering
+            # just one (matches the same fix in stage2_candles.py's fallback
+            # pass, same underlying "exceeding access rate" symptom).
             for idx, missing_symbols in failed_chunks:
+                fallback_account = fallback_accounts[idx % len(fallback_accounts)]
                 try:
                     recovered = fallback_account.fetch_quotes_batch(missing_symbols)
                 except Exception as e:

@@ -110,6 +110,38 @@ def test_stage1_reports_warning_when_fallback_also_fails():
     assert any("BBB" in w or "unavailable" in w for w in result.warnings) or result.warnings
 
 
+def test_stage1_fallback_round_robins_across_all_configured_fallback_accounts():
+    """2026-08-19 live finding: same bug as Stage 2's - fallback_accounts[0]
+    was hardcoded, so a 2nd Angel One account sat completely unused for
+    Stage 1's fallback retries too. Multiple failed chunks must round-robin
+    across every configured fallback account, not all land on one."""
+    symbols = [f"SYM{i}" for i in range(8)]
+
+    def primary_quote_fn(chunk):
+        return []  # every chunk fails entirely, forcing all of them to fallback
+
+    fallback_a_calls = []
+    fallback_b_calls = []
+
+    def fallback_a_fn(chunk):
+        fallback_a_calls.append(list(chunk))
+        return [QuoteResult(symbol=s, last_price=100.0, pct_change=1.0) for s in chunk]
+
+    def fallback_b_fn(chunk):
+        fallback_b_calls.append(list(chunk))
+        return [QuoteResult(symbol=s, last_price=100.0, pct_change=1.0) for s in chunk]
+
+    primary = FakeAccount("primary", quote_fn=primary_quote_fn)
+    fallback_a = FakeAccount("fallback_a", quote_fn=fallback_a_fn)
+    fallback_b = FakeAccount("fallback_b", quote_fn=fallback_b_fn)
+
+    fetch_ranking_data(symbols, primary_accounts=[primary],
+                        fallback_accounts=[fallback_a, fallback_b])
+
+    assert len(fallback_a_calls) > 0
+    assert len(fallback_b_calls) > 0
+
+
 def test_merge_unique_symbols_dedupes_across_universes():
     top_lists = {
         "bot_300": pd.DataFrame({"symbol": ["BBB", "CCC", "DDD"]}),  # BBB/CCC overlap
@@ -185,3 +217,24 @@ def test_stage2_fallback_handles_a_large_burst_of_failures_correctly():
     assert sorted(fallback.candle_calls) == sorted(symbols)  # every failed symbol got exactly one fallback attempt
     assert len(fallback.candle_calls) == len(symbols)  # no duplicate/missing attempts from the parallel workers
     assert any("8/40" in w for w in result.warnings)  # 40/5 = 8 symbols still failed after fallback
+
+
+def test_stage2_fallback_spreads_across_all_configured_fallback_accounts():
+    """2026-08-19 live finding: fallback used to hardcode fallback_accounts[0]
+    - with a 2nd Angel One account configured, the ENTIRE fallback burst still
+    hammered just one account instead of splitting across both, live-observed
+    as recurring "exceeding access rate" 403s even though the underlying
+    symbols fetched fine when tested individually. Every configured fallback
+    account must get used, not just the first one."""
+    symbols = [f"SYM{i}" for i in range(20)]
+    primary = FakeAccount("primary", candle_fn=lambda s, i, p: None)  # everything fails on primary
+    fallback_a = FakeAccount("fallback_a", candle_fn=lambda s, i, p: pd.DataFrame({"Close": [1]}))
+    fallback_b = FakeAccount("fallback_b", candle_fn=lambda s, i, p: pd.DataFrame({"Close": [1]}))
+
+    result = fetch_candle_history(symbols, primary_accounts=[primary],
+                                   fallback_accounts=[fallback_a, fallback_b])
+
+    assert len(result.candles_by_symbol) == 20
+    assert len(fallback_a.candle_calls) > 0
+    assert len(fallback_b.candle_calls) > 0
+    assert len(fallback_a.candle_calls) + len(fallback_b.candle_calls) == 20

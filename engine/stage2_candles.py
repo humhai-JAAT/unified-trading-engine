@@ -92,7 +92,7 @@ def fetch_candle_history(symbols: list[str], interval: str = "5m", period_days: 
                 failed_symbols.append(symbol)
 
     if failed_symbols and fallback_accounts:
-        # Parallel across CANDLE_WORKERS_PER_ACCOUNT workers on the fallback
+        # Parallel across CANDLE_WORKERS_PER_ACCOUNT workers PER fallback
         # account, same pattern as the primary pass above — was a plain
         # sequential loop until 2026-08-11 live testing found it: when the
         # PRIMARY broker degrades (rate-limited, etc.), its ENTIRE symbol
@@ -102,11 +102,17 @@ def fetch_candle_history(symbols: list[str], interval: str = "5m", period_days: 
         # calls started failing that succeeded fine when tested individually
         # in isolation — a "thundering herd on the fallback path" symptom,
         # not a problem with those specific symbols. Parallelizing shortens
-        # the burst's wall-clock duration; the fallback account's existing
+        # the burst's wall-clock duration; each account's existing
         # AccountRateLimiter still correctly throttles regardless of how
         # many workers share it (that's its whole design, see rate_limiter.py).
-        fallback_account = fallback_accounts[0]
-        fallback_workers = [fallback_account] * CANDLE_WORKERS_PER_ACCOUNT
+        # 2026-08-19: was hardcoded to fallback_accounts[0] only — with a 2nd
+        # Angel One account now configured, this meant the entire fallback
+        # burst still hammered ONE account instead of splitting across both,
+        # live-observed as recurring "exceeding access rate" 403s even
+        # though the underlying symbols were fine when tested individually.
+        # Spreading across every configured fallback account roughly doubles
+        # fallback capacity (and does nothing different with just 1 account).
+        fallback_workers = [acct for acct in fallback_accounts for _ in range(CANDLE_WORKERS_PER_ACCOUNT)]
         still_failed = []
         with ThreadPoolExecutor(max_workers=len(fallback_workers)) as executor:
             futures = {
@@ -126,9 +132,10 @@ def fetch_candle_history(symbols: list[str], interval: str = "5m", period_days: 
                 else:
                     still_failed.append(symbol)
         if still_failed:
+            fallback_ids = ", ".join(acct.account_id for acct in fallback_accounts)
             result.warnings.append(
                 f"{len(still_failed)}/{len(symbols)} symbols had no candle data even after "
-                f"fallback ({fallback_account.account_id}): {still_failed[:10]}"
+                f"fallback ({fallback_ids}): {still_failed[:10]}"
                 f"{'...' if len(still_failed) > 10 else ''}"
             )
     elif failed_symbols:
