@@ -84,8 +84,17 @@ def _http_error_detail(e: "requests.exceptions.HTTPError") -> str:
 
 ANGELONE_QUOTE_RATE_SECONDS = 1.1     # Angel One quote API: 1 req/sec + buffer
 ANGELONE_CANDLE_RATE_SECONDS = 0.4    # Angel One candle API: 3 req/sec + buffer
-GROWW_QUOTE_RATE_SECONDS = 0.05       # Groww quote/OHLC: ~25 req/sec + buffer
-GROWW_CANDLE_RATE_SECONDS = 0.05      # same endpoint family per Groww's docs
+GROWW_QUOTE_RATE_SECONDS = 0.12       # Groww's OWN official rate-limit table (2026-08-19,
+                                       # https://groww.in/trade-api/docs/curl) buckets "Market
+                                       # Quote, LTP, OHLC" under "Live Data" = 10 req/sec, NOT
+                                       # the ~25 req/sec this constant used to assume (that
+                                       # number was never sourced from an official doc). 0.12s
+                                       # (~8.3 req/sec) is a safe buffer under the real 10/sec cap.
+GROWW_CANDLE_RATE_SECONDS = 0.12      # Historical candle data has NO documented rate limit at
+                                       # all (checked https://groww.in/trade-api/docs/curl/backtesting
+                                       # — only data-duration limits are listed, no req/sec).
+                                       # Conservatively assumed to share the "Live Data" bucket's
+                                       # 10 req/sec rather than guessing a higher number again.
 ANGELONE_QUOTE_BATCH_SIZE = 50
 GROWW_QUOTE_BATCH_SIZE = 50
 ANGELONE_SESSION_TTL_SECONDS = 2 * 3600  # JWT valid 2.5h, re-login before that
