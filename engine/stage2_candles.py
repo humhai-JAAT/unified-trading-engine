@@ -19,6 +19,34 @@ logger = get_logger(__name__)
 
 CANDLE_WORKERS_PER_ACCOUNT = 3
 
+# Groww's historical-candle endpoint only accepts an explicit start_time/
+# end_time calendar-date range - there is no "give me the last N trading
+# days" parameter (checked https://groww.in/trade-api/docs/curl/backtesting's
+# full parameter list, 2026-08-19). Weekends/holidays fall inside that
+# calendar window unpredictably, so a fixed `period_days` calendar count
+# doesn't reliably yield the same number of real trading sessions every
+# time. Fetch a generous CALENDAR_FETCH_DAYS window (comfortably covers any
+# normal weekend/holiday stretch), then trim down to exactly
+# CANDLE_LOOKBACK_TRADING_DAYS real trading days using the response's OWN
+# dates (a day with zero candles simply wasn't a trading day - no holiday
+# calendar needed). Live-verified 2026-08-19: a 12-day fetch returned 8
+# distinct trading dates, trimming to the last 4 correctly dropped the
+# weekend in between and left 307-315 bars/symbol, comfortably above
+# strategy.MIN_BARS_REQUIRED (109).
+CALENDAR_FETCH_DAYS = 12
+CANDLE_LOOKBACK_TRADING_DAYS = 4
+
+
+def trim_to_last_n_trading_days(df: "pd.DataFrame | None", n_days: int) -> "pd.DataFrame | None":
+    """Keeps only the rows whose date is among the last `n_days` DISTINCT
+    dates present in `df`'s DatetimeIndex - not the last n_days of the
+    calendar, the last n_days that actually have candles in it."""
+    if df is None or df.empty or not isinstance(df.index, pd.DatetimeIndex):
+        return df
+    dates = sorted(set(df.index.date))
+    keep_dates = set(dates[-n_days:])
+    return df[[d in keep_dates for d in df.index.date]]
+
 
 @dataclass
 class Stage2Result:
@@ -48,7 +76,7 @@ def _fetch_one(account: BrokerAccount, symbol: str, interval: str, period_days: 
     return account.fetch_candles(symbol, interval=interval, period_days=period_days)
 
 
-def fetch_candle_history(symbols: list[str], interval: str = "5m", period_days: int = 5,
+def fetch_candle_history(symbols: list[str], interval: str = "5m", period_days: int = CALENDAR_FETCH_DAYS,
                           primary_accounts: list[BrokerAccount] | None = None,
                           fallback_accounts: list[BrokerAccount] | None = None) -> Stage2Result:
     """Fetches candle history for each of `symbols` exactly once, in parallel
@@ -56,7 +84,9 @@ def fetch_candle_history(symbols: list[str], interval: str = "5m", period_days: 
     per-symbol fallback to `fallback_accounts` (defaults to configured Angel
     One accounts) on failure — matches Stage 1's chunk-level fallback pattern,
     just at symbol granularity here since candle-history calls are already
-    1-symbol-per-call (no batching to fail at a coarser level)."""
+    1-symbol-per-call (no batching to fail at a coarser level). Every returned
+    DataFrame is trimmed to the last CANDLE_LOOKBACK_TRADING_DAYS real trading
+    days before being stored — see the module docstring above."""
     accounts = get_configured_accounts()
     if primary_accounts is None:
         primary_accounts = accounts["groww"] or accounts["angelone"]
@@ -86,6 +116,7 @@ def fetch_candle_history(symbols: list[str], interval: str = "5m", period_days: 
             except Exception as e:
                 logger.warning(f"Stage 2 fetch for {symbol} raised: {e}")
                 df = None
+            df = trim_to_last_n_trading_days(df, CANDLE_LOOKBACK_TRADING_DAYS)
             if df is not None and not df.empty:
                 result.candles_by_symbol[symbol] = df
             else:
@@ -127,6 +158,7 @@ def fetch_candle_history(symbols: list[str], interval: str = "5m", period_days: 
                 except Exception as e:
                     logger.warning(f"Stage 2 fallback fetch for {symbol} raised: {e}")
                     df = None
+                df = trim_to_last_n_trading_days(df, CANDLE_LOOKBACK_TRADING_DAYS)
                 if df is not None and not df.empty:
                     result.candles_by_symbol[symbol] = df
                 else:

@@ -8,7 +8,7 @@ import pytest
 
 from engine.broker_accounts import BrokerAccount, QuoteResult
 from engine.stage1_ranking import _chunk, fetch_ranking_data
-from engine.stage2_candles import fetch_candle_history, merge_unique_symbols
+from engine.stage2_candles import fetch_candle_history, merge_unique_symbols, trim_to_last_n_trading_days
 
 
 class FakeAccount(BrokerAccount):
@@ -238,3 +238,57 @@ def test_stage2_fallback_spreads_across_all_configured_fallback_accounts():
     assert len(fallback_a.candle_calls) > 0
     assert len(fallback_b.candle_calls) > 0
     assert len(fallback_a.candle_calls) + len(fallback_b.candle_calls) == 20
+
+
+def test_trim_to_last_n_trading_days_drops_a_weekend_gap():
+    """2026-08-19: Groww's historical-candle endpoint only accepts a calendar
+    start_time/end_time range (no 'last N trading days' parameter, confirmed
+    against the official docs) — a fixed calendar-day count doesn't reliably
+    yield the same number of real trading sessions since weekends/holidays
+    fall inside that window unpredictably. Trimming by the response's OWN
+    distinct dates (no candle = not a trading day) sidesteps needing a
+    holiday calendar at all."""
+    # Fri, Mon, Tue, Wed, Thu - 5 real trading days, no weekend candles present
+    # (exactly what Groww's response looks like - the gap is just absent).
+    trading_days = [
+        pd.Timestamp("2026-08-14"), pd.Timestamp("2026-08-17"), pd.Timestamp("2026-08-18"),
+        pd.Timestamp("2026-08-19"), pd.Timestamp("2026-08-20"),
+    ]
+    idx = pd.DatetimeIndex([d + pd.Timedelta(minutes=5 * i) for d in trading_days for i in range(3)])
+    df = pd.DataFrame({"Close": range(len(idx))}, index=idx)
+
+    trimmed = trim_to_last_n_trading_days(df, 4)
+
+    assert sorted(set(trimmed.index.date)) == [d.date() for d in trading_days[-4:]]
+    assert pd.Timestamp("2026-08-14").date() not in set(trimmed.index.date)  # oldest day dropped
+
+
+def test_trim_to_last_n_trading_days_passes_through_non_datetime_index_unchanged():
+    """Some callers (and this project's own test fakes) use plain
+    RangeIndex/mocked DataFrames with no real dates - trimming must no-op on
+    those instead of crashing, since 'last N trading days' is meaningless
+    without an actual DatetimeIndex."""
+    df = pd.DataFrame({"Close": [1, 2, 3]})
+    assert trim_to_last_n_trading_days(df, 4) is df
+
+    assert trim_to_last_n_trading_days(None, 4) is None
+
+    empty = pd.DataFrame({"Close": []})
+    assert trim_to_last_n_trading_days(empty, 4) is empty
+
+
+def test_stage2_trims_fetched_candles_to_the_configured_trading_day_lookback():
+    """fetch_candle_history must apply the trading-day trim before storing a
+    result - covers the real integration path, not just the helper in
+    isolation."""
+    trading_days = [pd.Timestamp("2026-08-14"), pd.Timestamp("2026-08-17"),
+                     pd.Timestamp("2026-08-18"), pd.Timestamp("2026-08-19"), pd.Timestamp("2026-08-20")]
+    idx = pd.DatetimeIndex([d + pd.Timedelta(minutes=5 * i) for d in trading_days for i in range(3)])
+    wide_df = pd.DataFrame({"Close": range(len(idx))}, index=idx)
+
+    account = FakeAccount("primary", candle_fn=lambda symbol, interval, period_days: wide_df)
+    result = fetch_candle_history(["AAA"], primary_accounts=[account], fallback_accounts=[])
+
+    fetched_dates = sorted(set(result.candles_by_symbol["AAA"].index.date))
+    assert len(fetched_dates) == 4  # not the full 5 trading days in wide_df
+    assert pd.Timestamp("2026-08-14").date() not in fetched_dates

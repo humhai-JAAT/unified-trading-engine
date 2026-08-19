@@ -31,6 +31,7 @@ from common import indicators
 from common.helpers import get_logger
 from engine import broker, config, db, strategy
 from engine.broker_accounts import BrokerAccount, get_configured_accounts
+from engine.stage2_candles import CALENDAR_FETCH_DAYS, CANDLE_LOOKBACK_TRADING_DAYS, trim_to_last_n_trading_days
 
 logger = get_logger(__name__)
 IST = pytz.timezone("Asia/Kolkata")
@@ -207,7 +208,8 @@ def _decide_and_exit(variant_id: str, variant_cfg: dict, trade: dict, settings: 
             db.mark_target_hit(variant_id, trade["id"])
 
     if reason is None and target_hit:
-        df_5m = account.fetch_candles(symbol, interval="5m", period_days=5)
+        df_5m = account.fetch_candles(symbol, interval="5m", period_days=CALENDAR_FETCH_DAYS)
+        df_5m = trim_to_last_n_trading_days(df_5m, CANDLE_LOOKBACK_TRADING_DAYS)
         exit_style = variant_cfg["exit_style"]
         if exit_style == "ema":
             trail_price = check_ema9_trail_exit(df_5m)
