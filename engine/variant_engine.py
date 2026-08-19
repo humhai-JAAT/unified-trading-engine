@@ -244,11 +244,20 @@ def _decide_and_exit(variant_id: str, variant_cfg: dict, trade: dict, settings: 
 
 def scan_for_entry(universe_bot_key: str, variant_cfg: dict, settings: dict, now: datetime,
                     top_n_df: pd.DataFrame, candles_by_symbol: dict[str, pd.DataFrame],
-                    was_flat: bool) -> dict:
+                    was_flat: bool, indicator_cache: dict[str, pd.DataFrame] | None = None) -> dict:
     """Scans `top_n_df` (this universe-bot's own top-N from Stage 1) against
     `candles_by_symbol` (Stage 2's shared candle-history dict) for a fresh
     entry signal, gated by this variant's entry-timing (subh30 checkpoint /
-    puradin continuous)."""
+    puradin continuous).
+
+    `indicator_cache` (build once per cycle via strategy.build_indicator_cache,
+    shared across all 8 variants' scan_for_entry calls — see scheduler.py) lets
+    every variant reuse the SAME symbol's already-computed EMA/MACD instead of
+    recomputing it per variant — build_indicators() is purely symbol-dependent,
+    only the final decide_entry() step is genuinely variant-specific (each
+    variant tracks its own used_arm_cycles). Falls back to computing indicators
+    inline (the old per-call behavior) if no cache is supplied, e.g. from a
+    test calling this directly."""
     variant_id = f"{universe_bot_key}/{variant_cfg['key']}"
 
     if variant_cfg["entry_timing"] == "subh30":
@@ -272,7 +281,14 @@ def scan_for_entry(universe_bot_key: str, variant_cfg: dict, settings: dict, now
 
         try:
             used_arm_cycles = db.get_arm_cycles_used_today(variant_id, symbol)
-            check = strategy.check_entry(candle_df, used_arm_cycles=used_arm_cycles, today=now)
+            if indicator_cache is not None:
+                enriched = indicator_cache.get(symbol)
+                check = (strategy.decide_entry(enriched, used_arm_cycles=used_arm_cycles, today=now)
+                         if enriched is not None
+                         else strategy.EntryCheck(False, None, float(candle_df["Close"].iloc[-1]),
+                                                   "insufficient_history"))
+            else:
+                check = strategy.check_entry(candle_df, used_arm_cycles=used_arm_cycles, today=now)
         except Exception as e:
             # 2026-08-17: check_entry has been crashing the ENTIRE cycle (all 8
             # variants, every symbol) with an intermittent, still-unroot-caused

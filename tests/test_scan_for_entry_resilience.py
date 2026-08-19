@@ -79,3 +79,31 @@ def test_a_crash_does_not_block_a_later_real_entry_signal():
 
     assert result["action"] == "enter"
     mock_enter.assert_called_once()
+
+
+def test_a_crash_on_one_symbol_does_not_abort_the_whole_scan_via_indicator_cache():
+    """Same crash-isolation guarantee as the first test above, but through the
+    indicator_cache code path (2026-08-19) - production now always passes a
+    shared cache built once per cycle via strategy.build_indicator_cache, so
+    this path (not the check_entry fallback) is what actually runs live."""
+    top_n_df = pd.DataFrame({"symbol": ["CRASHY", "FINE"]})
+    candles_by_symbol = {"CRASHY": _candle_df(), "FINE": _candle_df()}
+    indicator_cache = {"CRASHY": _candle_df(), "FINE": _candle_df()}  # stand-in "enriched" dfs
+
+    def fake_decide_entry(enriched, used_arm_cycles=frozenset(), today=None):
+        if enriched is indicator_cache["CRASHY"]:
+            raise RecursionError("maximum recursion depth exceeded")
+        return EntryCheck(signal=False, arm_cycle_id=None, close=100.0, reason="no_signal")
+
+    with patch("engine.variant_engine.db.get_arm_cycles_used_today", return_value=set()), \
+         patch("engine.variant_engine.strategy.decide_entry", side_effect=fake_decide_entry):
+        result = scan_for_entry(
+            "bot_400", VARIANT_CFG, settings={"starting_capital": 10000, "leverage_multiplier": 1.0},
+            now=_now(), top_n_df=top_n_df, candles_by_symbol=candles_by_symbol, was_flat=True,
+            indicator_cache=indicator_cache,
+        )
+
+    assert result["action"] == "no_signal"
+    candidates = {c["symbol"]: c for c in result["candidates"]}
+    assert candidates["CRASHY"]["reason"].startswith("error: RecursionError")
+    assert candidates["FINE"]["reason"] == "no_signal"

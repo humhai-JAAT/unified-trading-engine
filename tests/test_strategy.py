@@ -10,7 +10,10 @@ path responsible for that guarantee; these tests prove it actually holds.
 import numpy as np
 import pandas as pd
 
-from engine.strategy import MAX_ARM_CYCLE_AGE_DAYS, MIN_BARS_REQUIRED, build_indicators, check_entry
+from engine.strategy import (
+    MAX_ARM_CYCLE_AGE_DAYS, MIN_BARS_REQUIRED, build_indicator_cache, build_indicators,
+    check_entry, decide_entry,
+)
 
 
 def _rising_breakout_candles(warmup=None, rise_bars=8):
@@ -132,3 +135,36 @@ def test_check_entry_allows_a_one_day_old_arm_cycle_with_a_fresh_trigger():
     result = check_entry(df_at_first, today=next_day)
     assert result.signal is True
     assert result.reason == "entry"
+
+
+def test_decide_entry_matches_check_entry_exactly():
+    """2026-08-19: decide_entry() + build_indicators() (called separately, so
+    a caller can cache the indicators across multiple variants) must produce
+    IDENTICAL results to check_entry() (the single-call path) for the same
+    input — this is the correctness guarantee the whole per-symbol indicator
+    cache optimization depends on. Checked across several bars, not just the
+    entry bar, so no-signal/stale/fresh cases are all covered too."""
+    df = _rising_breakout_candles()
+    enriched = build_indicators(df)
+    for i in range(MIN_BARS_REQUIRED, len(df)):
+        df_slice = df.iloc[:i + 1]
+        enriched_slice = enriched.iloc[:i + 1]
+        via_check_entry = check_entry(df_slice, used_arm_cycles={"some_id"}, today=df_slice.index[-1])
+        via_decide_entry = decide_entry(enriched_slice, used_arm_cycles={"some_id"}, today=df_slice.index[-1])
+        assert via_check_entry == via_decide_entry
+
+
+def test_build_indicator_cache_skips_symbols_with_too_little_history():
+    """A symbol with fewer than MIN_BARS_REQUIRED bars must be OMITTED from
+    the cache (not stored as a partially-built/garbage entry) - the caller
+    (variant_engine.scan_for_entry) treats a cache miss as
+    'insufficient_history', matching check_entry's own behavior."""
+    short_df = _rising_breakout_candles(warmup=5, rise_bars=2)  # well under MIN_BARS_REQUIRED
+    full_df = _rising_breakout_candles()
+
+    cache = build_indicator_cache({"SHORT": short_df, "FULL": full_df, "MISSING": None})
+
+    assert "SHORT" not in cache
+    assert "MISSING" not in cache
+    assert "FULL" in cache
+    assert len(cache["FULL"]) == len(full_df)
