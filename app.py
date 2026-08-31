@@ -41,7 +41,11 @@ st.set_page_config(page_title="Unified Trading Engine", page_icon="🧩", layout
 dashboard_view.inject_custom_css()
 
 IST = pytz.timezone("Asia/Kolkata")
-db.init_db()
+try:
+    db.init_db()
+except Exception as e:
+    st.error(f"Database connection failed: {e}")
+    st.stop()
 settings = config.load_settings()
 
 st.title("🧩 Unified Trading Engine")

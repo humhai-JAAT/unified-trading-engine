@@ -164,6 +164,14 @@ class AngelOneAccount(BrokerAccount):
         self._api_key = api_key
         self._jwt_token: str | None = None
         self._logged_in_at = 0.0
+        # 2026-08-20: without this lock, N concurrent worker threads sharing this
+        # SAME account (e.g. CANDLE_WORKERS_PER_ACCOUNT=3 during a Stage 2
+        # fallback burst) could all see a None/expired _jwt_token at once and
+        # each independently call _login() - Angel One's own documented login
+        # limit is 1 req/sec, so 3 near-simultaneous logins reliably trigger a
+        # 403. Same bug class as GrowwAccount._client_lock (fixed 2026-08-17)
+        # - never ported to this class until now.
+        self._session_lock = threading.Lock()
         self._instrument_cache_path = PROJECT_ROOT / "data" / f"angelone_instrument_master_{account_id}.csv"
         super().__init__()
 
@@ -216,9 +224,19 @@ class AngelOneAccount(BrokerAccount):
             return False
 
     def _ensure_session(self) -> bool:
-        if self._jwt_token is None or time.time() - self._logged_in_at > ANGELONE_SESSION_TTL_SECONDS:
+        """Double-checked locking, same pattern as GrowwAccount._get_client():
+        the fast path (no lock) handles the common case of an already-valid
+        session; only when a real (re)login might be needed does a thread take
+        _session_lock, then re-check inside it — so at most ONE thread ever
+        actually calls _login() at a time, and the rest simply reuse the fresh
+        token that thread just obtained instead of racing their own login call
+        against it."""
+        if self._jwt_token is not None and time.time() - self._logged_in_at <= ANGELONE_SESSION_TTL_SECONDS:
+            return True
+        with self._session_lock:
+            if self._jwt_token is not None and time.time() - self._logged_in_at <= ANGELONE_SESSION_TTL_SECONDS:
+                return True
             return self._login()
-        return True
 
     def _load_symbol_to_token(self, force_refresh: bool = False) -> dict:
         if not force_refresh and self._instrument_cache_path.exists():

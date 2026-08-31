@@ -112,14 +112,25 @@ def check_atr_trail_exit(candle_df: pd.DataFrame, peak_price: float, atr_period:
 # ---------------------------------------------------------------------------
 
 def _position_data_accounts() -> list[BrokerAccount]:
-    """Primary (Groww) then fallback (Angel One) — same account priority as
-    Stage 1/2, but previously this path had NO fallback at all (2026-08-12
-    live finding: Groww hit its own rate limit, which silently froze
-    position management for every open trade with zero visibility, since a
-    Groww-only failure here fell straight through to the "no_price_data"
-    hold below instead of trying the other broker)."""
+    """ALL configured Groww accounts, then ALL configured Angel One accounts
+    — same account priority AND same "use every configured account, not just
+    the first" pattern as Stage 1/2 (see stage2_candles.py's 2026-08-19 fix).
+    This path previously only ever tried accounts[0] of each broker
+    (groww_2/angelone_2 sat completely unused here) - meant this single
+    Groww/Angel One account carried BOTH its own share of Stage 1/2's load
+    AND 100% of every 2-min position-management cycle's load, while the
+    second account only ever helped with Stage 1/2. Root-caused as a real
+    contributor to "no_price_data" holds 2026-08-20: an asymmetric-load
+    live test showed the account carrying this extra duty failing far more
+    often than its sibling on the exact same symbols at the exact same time.
+    Before this fix, and until 2026-08-12, this path had NO fallback AT ALL
+    (Groww hit its own rate limit, which silently froze position management
+    for every open trade with zero visibility, since a Groww-only failure
+    here fell straight through to the "no_price_data" hold below instead of
+    trying the other broker) - fixed then to try 1 Groww + 1 Angel One; now
+    extended to try every configured account of each."""
     accounts = get_configured_accounts()
-    return (accounts["groww"][:1] or []) + (accounts["angelone"][:1] or [])
+    return accounts["groww"] + accounts["angelone"]
 
 
 def manage_open_position(variant_id: str, variant_cfg: dict, trade: dict, settings: dict,

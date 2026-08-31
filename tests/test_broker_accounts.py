@@ -8,7 +8,7 @@ to secret-only without anyone noticing.
 
 from unittest.mock import MagicMock, patch
 
-from engine.broker_accounts import GrowwAccount
+from engine.broker_accounts import AngelOneAccount, GrowwAccount
 
 
 def _isolated_account(tmp_path, **kwargs) -> GrowwAccount:
@@ -150,3 +150,60 @@ def test_is_configured_true_with_either_auth_method():
     assert GrowwAccount(account_id="g", api_key="key", api_secret="s").is_configured() is True
     assert GrowwAccount(account_id="g", api_key="key").is_configured() is False
     assert GrowwAccount(account_id="g", api_key=None, totp_secret="s").is_configured() is False
+
+
+@patch("pyotp.TOTP")
+@patch("requests.post")
+def test_ensure_session_serializes_concurrent_callers_into_one_login_call(mock_post, mock_totp):
+    """2026-08-20 live finding: same bug CLASS as GrowwAccount._get_client()'s
+    2026-08-18 fix above, never ported to AngelOneAccount until now.
+    CANDLE_WORKERS_PER_ACCOUNT=3 threads sharing one Angel One account during
+    a Stage 2 fallback burst could all see a None/expired _jwt_token at once
+    and each independently call _login() - live-observed as real "Access
+    denied because of exceeding access rate" 403s on the historical-candle
+    endpoint, consistent with Angel One's own documented 1 req/sec LOGIN
+    limit (not the 3 req/sec candle limit) being exceeded by near-simultaneous
+    duplicate logins. Only the first concurrent caller should ever reach
+    the login endpoint; the rest must block and then reuse its session."""
+    import threading
+    import time as time_module
+
+    mock_totp.return_value.now.return_value = "123456"
+
+    def slow_login_response(*args, **kwargs):
+        time_module.sleep(0.05)  # widen the race window
+        resp = MagicMock()
+        resp.raise_for_status.return_value = None
+        resp.json.return_value = {"status": True, "data": {"jwtToken": "fake-jwt"}}
+        return resp
+
+    mock_post.side_effect = slow_login_response
+
+    account = AngelOneAccount(account_id="test_isolated", client_code="C1",
+                               password="pw", totp_secret="SECRETSEED", api_key="key")
+    results = []
+
+    def call():
+        results.append(account._ensure_session())
+
+    threads = [threading.Thread(target=call) for _ in range(5)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert mock_post.call_count == 1
+    assert len(results) == 5
+    assert all(r is True for r in results)
+    assert account._jwt_token == "fake-jwt"
+
+
+def test_ensure_session_reuses_a_still_valid_session_without_relogging_in():
+    account = AngelOneAccount(account_id="test_isolated", client_code="C1",
+                               password="pw", totp_secret="SECRETSEED", api_key="key")
+    account._jwt_token = "already-valid"
+    account._logged_in_at = __import__("time").time()
+
+    with patch("requests.post") as mock_post:
+        assert account._ensure_session() is True
+        mock_post.assert_not_called()

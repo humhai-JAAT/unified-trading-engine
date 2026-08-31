@@ -13,9 +13,31 @@ import pandas as pd
 import pytest
 import pytz
 
-from engine.variant_engine import check_atr_trail_exit, check_ema9_trail_exit, manage_open_position
+from engine.variant_engine import (
+    _position_data_accounts, check_atr_trail_exit, check_ema9_trail_exit, manage_open_position,
+)
 
 IST = pytz.timezone("Asia/Kolkata")
+
+
+@patch("engine.variant_engine.get_configured_accounts")
+def test_position_data_accounts_uses_every_configured_account_not_just_the_first(mock_get_accounts):
+    """2026-08-20 live finding: this used to be `accounts["groww"][:1] +
+    accounts["angelone"][:1]` - groww_2/angelone_2 sat completely unused by
+    position management, meaning groww_1/angelone_1 alone carried BOTH their
+    own share of Stage 1/2's load AND 100% of every 2-min position-management
+    cycle - a live asymmetric-load test showed the account carrying this
+    extra duty failing far more often than its sibling on identical symbols
+    at the identical time. Must use every configured account of each broker,
+    same as Stage 1/2 already do."""
+    fake_groww = ["groww_1_account", "groww_2_account"]
+    fake_angelone = ["angelone_1_account", "angelone_2_account"]
+    mock_get_accounts.return_value = {"groww": fake_groww, "angelone": fake_angelone}
+
+    result = _position_data_accounts()
+
+    assert result == fake_groww + fake_angelone
+    assert len(result) == 4  # not 2 (one per broker) like the old [:1] + [:1] behavior
 
 
 def _flat_5m(level=100.0, n=30):

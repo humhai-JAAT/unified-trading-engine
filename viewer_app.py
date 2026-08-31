@@ -32,7 +32,11 @@ from engine import config, dashboard_view, db
 st.set_page_config(page_title="Unified Trading Engine — Viewer", page_icon="🧩", layout="wide")
 dashboard_view.inject_custom_css()
 
-db.init_db()
+try:
+    db.init_db()
+except Exception as e:
+    st.error(f"Database connection failed: {e}")
+    st.stop()
 settings = config.load_settings()
 
 st.title("🧩 Unified Trading Engine — Viewer")
